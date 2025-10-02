@@ -1,0 +1,183 @@
+# Team Aliases and Tricode Normalization
+# Maps Basketball-Reference and NBA Stats variations to canonical tricodes
+
+teams:
+  ATL:
+    canonical: "ATL"
+    nba_stats: ["ATL", "ATLANTA"]
+    bref: ["ATL", "ATLANTA HAWKS"]
+    aliases: ["HAWKS"]
+    
+  BOS:
+    canonical: "BOS"
+    nba_stats: ["BOS", "BOSTON"]
+    bref: ["BOS", "BOSTON CELTICS"]
+    aliases: ["CELTICS"]
+    
+  BRK:
+    canonical: "BRK"
+    nba_stats: ["BKN", "BRK", "BROOKLYN"]
+    bref: ["BRK", "BROOKLYN NETS"]
+    aliases: ["NETS", "BKN"]
+    
+  CHA:
+    canonical: "CHA"
+    nba_stats: ["CHA", "CHARLOTTE"]
+    bref: ["CHA", "CHARLOTTE HORNETS"]
+    aliases: ["HORNETS"]
+    
+  CHI:
+    canonical: "CHI"
+    nba_stats: ["CHI", "CHICAGO"]
+    bref: ["CHI", "CHICAGO BULLS"]
+    aliases: ["BULLS"]
+    
+  CLE:
+    canonical: "CLE"
+    nba_stats: ["CLE", "CLEVELAND"]
+    bref: ["CLE", "CLEVELAND CAVALIERS"]
+    aliases: ["CAVALIERS", "CAVS"]
+    
+  DAL:
+    canonical: "DAL"
+    nba_stats: ["DAL", "DALLAS"]
+    bref: ["DAL", "DALLAS MAVERICKS"]
+    aliases: ["MAVERICKS", "MAVS"]
+    
+  DEN:
+    canonical: "DEN"
+    nba_stats: ["DEN", "DENVER"]
+    bref: ["DEN", "DENVER NUGGETS"]
+    aliases: ["NUGGETS"]
+    
+  DET:
+    canonical: "DET"
+    nba_stats: ["DET", "DETROIT"]
+    bref: ["DET", "DETROIT PISTONS"]
+    aliases: ["PISTONS"]
+    
+  GSW:
+    canonical: "GSW"
+    nba_stats: ["GSW", "GOLDEN STATE"]
+    bref: ["GSW", "GOLDEN STATE WARRIORS"]
+    aliases: ["WARRIORS"]
+    
+  HOU:
+    canonical: "HOU"
+    nba_stats: ["HOU", "HOUSTON"]
+    bref: ["HOU", "HOUSTON ROCKETS"]
+    aliases: ["ROCKETS"]
+    
+  IND:
+    canonical: "IND"
+    nba_stats: ["IND", "INDIANA"]
+    bref: ["IND", "INDIANA PACERS"]
+    aliases: ["PACERS"]
+    
+  LAC:
+    canonical: "LAC"
+    nba_stats: ["LAC", "LA CLIPPERS"]
+    bref: ["LAC", "LOS ANGELES CLIPPERS"]
+    aliases: ["CLIPPERS"]
+    
+  LAL:
+    canonical: "LAL"
+    nba_stats: ["LAL", "LA LAKERS"]
+    bref: ["LAL", "LOS ANGELES LAKERS"]
+    aliases: ["LAKERS"]
+    
+  MEM:
+    canonical: "MEM"
+    nba_stats: ["MEM", "MEMPHIS"]
+    bref: ["MEM", "MEMPHIS GRIZZLIES"]
+    aliases: ["GRIZZLIES"]
+    
+  MIA:
+    canonical: "MIA"
+    nba_stats: ["MIA", "MIAMI"]
+    bref: ["MIA", "MIAMI HEAT"]
+    aliases: ["HEAT"]
+    
+  MIL:
+    canonical: "MIL"
+    nba_stats: ["MIL", "MILWAUKEE"]
+    bref: ["MIL", "MILWAUKEE BUCKS"]
+    aliases: ["BUCKS"]
+    
+  MIN:
+    canonical: "MIN"
+    nba_stats: ["MIN", "MINNESOTA"]
+    bref: ["MIN", "MINNESOTA TIMBERWOLVES"]
+    aliases: ["TIMBERWOLVES", "WOLVES"]
+    
+  NOP:
+    canonical: "NOP"
+    nba_stats: ["NOP", "NEW ORLEANS"]
+    bref: ["NOP", "NEW ORLEANS PELICANS"]
+    aliases: ["PELICANS"]
+    
+  NYK:
+    canonical: "NYK"
+    nba_stats: ["NYK", "NEW YORK"]
+    bref: ["NYK", "NEW YORK KNICKS"]
+    aliases: ["KNICKS"]
+    
+  OKC:
+    canonical: "OKC"
+    nba_stats: ["OKC", "OKLAHOMA CITY"]
+    bref: ["OKC", "OKLAHOMA CITY THUNDER"]
+    aliases: ["THUNDER"]
+    
+  ORL:
+    canonical: "ORL"
+    nba_stats: ["ORL", "ORLANDO"]
+    bref: ["ORL", "ORLANDO MAGIC"]
+    aliases: ["MAGIC"]
+    
+  PHI:
+    canonical: "PHI"
+    nba_stats: ["PHI", "PHILADELPHIA"]
+    bref: ["PHI", "PHILADELPHIA 76ERS"]
+    aliases: ["76ERS", "SIXERS"]
+    
+  PHX:
+    canonical: "PHX"
+    nba_stats: ["PHX", "PHOENIX"]
+    bref: ["PHX", "PHOENIX SUNS"]
+    aliases: ["SUNS"]
+    
+  POR:
+    canonical: "POR"
+    nba_stats: ["POR", "PORTLAND"]
+    bref: ["POR", "PORTLAND TRAIL BLAZERS"]
+    aliases: ["TRAIL BLAZERS", "BLAZERS"]
+    
+  SAC:
+    canonical: "SAC"
+    nba_stats: ["SAC", "SACRAMENTO"]
+    bref: ["SAC", "SACRAMENTO KINGS"]
+    aliases: ["KINGS"]
+    
+  SAS:
+    canonical: "SAS"
+    nba_stats: ["SAS", "SAN ANTONIO"]
+    bref: ["SAS", "SAN ANTONIO SPURS"]
+    aliases: ["SPURS"]
+    
+  TOR:
+    canonical: "TOR"
+    nba_stats: ["TOR", "TORONTO"]
+    bref: ["TOR", "TORONTO RAPTORS"]
+    aliases: ["RAPTORS"]
+    
+  UTA:
+    canonical: "UTA"
+    nba_stats: ["UTA", "UTAH"]
+    bref: ["UTA", "UTAH JAZZ"]
+    aliases: ["JAZZ"]
+    
+  WAS:
+    canonical: "WAS"
+    nba_stats: ["WAS", "WASHINGTON"]
+    bref: ["WAS", "WASHINGTON WIZARDS"]
+    aliases: ["WIZARDS"]
