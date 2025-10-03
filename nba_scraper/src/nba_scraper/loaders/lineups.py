@@ -5,7 +5,7 @@ from typing import List
 
 from ..models import StartingLineupRow, InjuryStatusRow
 from ..db import get_connection
-from ..logging import get_logger
+from ..nba_logging import get_logger
 
 logger = get_logger(__name__)
 

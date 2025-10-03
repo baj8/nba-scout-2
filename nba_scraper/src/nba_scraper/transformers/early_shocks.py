@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from ..models.pbp_rows import PbpEventRow
 from ..models.derived_rows import EarlyShockRow
 from ..models.enums import EarlyShockType, EventType
-from ..logging import get_logger
+from ..nba_logging import get_logger
 
 logger = get_logger(__name__)
 
@@ -153,9 +153,11 @@ class EarlyShocksTransformer:
         tech_sequences = defaultdict(int)
         
         for event in q1_events:
-            if (event.event_type == EventType.TECHNICAL_FOUL or
-                (event.event_type == EventType.FOUL and self._is_technical_foul(event))):
-                
+            # FIXED: Check for EventType.TECHNICAL_FOUL first, then description
+            is_technical = (event.event_type == EventType.TECHNICAL_FOUL or
+                           self._is_technical_foul(event))
+            
+            if is_technical:
                 player_slug = event.player1_name_slug or "TEAM"
                 team_tricode = event.team_tricode or "UNK"
                 
@@ -206,9 +208,11 @@ class EarlyShocksTransformer:
         flagrant_sequences = defaultdict(int)
         
         for event in q1_events:
-            if (event.event_type == EventType.FLAGRANT_FOUL or
-                (event.event_type == EventType.FOUL and self._is_flagrant_foul(event))):
-                
+            # FIXED: Check for EventType.FLAGRANT_FOUL first, then description
+            is_flagrant = (event.event_type == EventType.FLAGRANT_FOUL or
+                          self._is_flagrant_foul(event))
+            
+            if is_flagrant:
                 if not event.player1_name_slug or not event.team_tricode:
                     continue
                 

@@ -12,7 +12,7 @@ from pdfminer.layout import LAParams
 
 from ..config import get_cache_dir, get_settings
 from ..http import get
-from ..logging import get_logger
+from ..nba_logging import get_logger
 
 logger = get_logger(__name__)
 

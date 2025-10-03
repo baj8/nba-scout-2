@@ -7,7 +7,7 @@ import asyncpg
 
 from ..models import GameRow, GameIdCrosswalkRow, OutcomesRow
 from ..db import get_connection
-from ..logging import get_logger
+from ..nba_logging import get_logger
 
 logger = get_logger(__name__)
 

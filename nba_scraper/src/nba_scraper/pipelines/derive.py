@@ -1,15 +1,15 @@
-"""Pipeline for deriving analytics tables from raw NBA data."""
+"""Pipeline for deriving analytics tables from raw NBA data with source awareness."""
 
 import asyncio
 from datetime import datetime, date
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, Set
 from dataclasses import dataclass
 
 from ..transformers.q1_window import Q1WindowTransformer
 from ..transformers.early_shocks import EarlyShocksTransformer
 from ..transformers.schedule_travel import ScheduleTravelTransformer
 from ..loaders.derived import DerivedLoader
-from ..logging import get_logger
+from ..nba_logging import get_logger
 from ..db import get_connection
 
 logger = get_logger(__name__)
@@ -18,14 +18,74 @@ logger = get_logger(__name__)
 @dataclass
 class DerivePipelineResult:
     """Result of a derive pipeline execution."""
-    success: bool
     start_date: date
     end_date: date
     tables_processed: List[str]
     tables_failed: List[str]
     records_updated: Dict[str, int]
-    duration_seconds: float
+    success: bool = False
     error: Optional[str] = None
+    duration_seconds: Optional[float] = None
+
+
+class AnalyticsRegistry:
+    """Registry of analytics with their data dependencies."""
+    
+    @staticmethod
+    def get_analytics_dependencies() -> Dict[str, Dict[str, Any]]:
+        """Return analytics and their data source dependencies."""
+        return {
+            'q1_window': {
+                'required_sources': ['nba_stats'],  # Needs PBP data
+                'required_data_types': {'pbp_events', 'games'},
+                'fallback_sources': [],  # No fallback for PBP analytics
+                'description': 'Q1 12:00-8:00 window analytics requiring play-by-play data'
+            },
+            'early_shocks': {
+                'required_sources': ['nba_stats'],  # Needs PBP data
+                'required_data_types': {'pbp_events', 'games'},
+                'fallback_sources': [],  # No fallback for PBP analytics
+                'description': 'Early game disruption events requiring play-by-play data'
+            },
+            'schedule_travel': {
+                'required_sources': ['bref', 'nba_stats'],  # Can use either
+                'required_data_types': {'games'},
+                'fallback_sources': ['gamebooks'],  # Basic game data
+                'description': 'Schedule and travel analytics using basic game data'
+            },
+            'outcomes': {
+                'required_sources': ['bref'],  # B-Ref preferred for accuracy
+                'required_data_types': {'games'},
+                'fallback_sources': ['nba_stats', 'gamebooks'],
+                'description': 'Game outcomes with B-Ref as preferred source'
+            }
+        }
+    
+    @staticmethod
+    def get_processable_analytics(available_sources: Set[str]) -> List[str]:
+        """Return analytics that can be processed with available data sources."""
+        dependencies = AnalyticsRegistry.get_analytics_dependencies()
+        processable = []
+        
+        for analytic, deps in dependencies.items():
+            # Check if we have any required source
+            required_sources = set(deps['required_sources'])
+            fallback_sources = set(deps.get('fallback_sources', []))
+            all_possible_sources = required_sources | fallback_sources
+            
+            if available_sources & all_possible_sources:
+                processable.append(analytic)
+                logger.debug("Analytics processable", 
+                           analytic=analytic,
+                           available_sources=available_sources & all_possible_sources)
+            else:
+                logger.warning("Analytics not processable - missing required sources",
+                             analytic=analytic,
+                             required=required_sources,
+                             fallback=fallback_sources,
+                             available=available_sources)
+        
+        return processable
 
 
 class DerivePipeline:
@@ -37,35 +97,50 @@ class DerivePipeline:
         self.early_shocks_transformer = EarlyShocksTransformer()
         self.schedule_travel_transformer = ScheduleTravelTransformer()
         self.derived_loader = DerivedLoader()
-        
+        self.analytics_registry = AnalyticsRegistry()
+    
     async def derive_all(
         self,
         start_date: date,
         end_date: date,
         tables: Optional[List[str]] = None,
         force: bool = False,
-        dry_run: bool = False
+        dry_run: bool = False,
+        available_sources: Optional[Set[str]] = None
     ) -> DerivePipelineResult:
-        """Derive all analytics tables for a date range.
+        """Derive analytics with source availability awareness.
         
         Args:
             start_date: Start date for derivation
-            end_date: End date for derivation
-            tables: Specific tables to derive (None for all)
-            force: Whether to force recomputation of existing data
-            dry_run: Whether to run in dry-run mode (no database writes)
-            
-        Returns:
-            DerivePipelineResult with execution details
+            end_date: End date for derivation 
+            tables: Specific tables to process (if None, processes all possible)
+            force: Force re-derivation even if data exists
+            dry_run: Don't actually write to database
+            available_sources: Set of data sources that have been processed
+                             If None, assumes all sources are available
         """
         start_time = datetime.utcnow()
         
-        # Default to all available tables
-        available_tables = ['q1_window', 'early_shocks', 'schedule_travel', 'outcomes']
-        tables_to_process = tables if tables else available_tables
+        # Auto-detect available sources if not provided
+        if available_sources is None:
+            available_sources = await self._detect_available_sources(start_date, end_date)
+        
+        # Determine processable analytics
+        if tables is None:
+            tables_to_process = self.analytics_registry.get_processable_analytics(available_sources)
+        else:
+            # Filter requested tables by what's actually processable
+            all_processable = self.analytics_registry.get_processable_analytics(available_sources)
+            tables_to_process = [t for t in tables if t in all_processable]
+            
+            # Warn about unprocessable tables
+            unprocessable = [t for t in tables if t not in all_processable]
+            if unprocessable:
+                logger.warning("Some analytics not processable with available sources",
+                             unprocessable=unprocessable,
+                             available_sources=available_sources)
         
         result = DerivePipelineResult(
-            success=False,
             start_date=start_date,
             end_date=end_date,
             tables_processed=[],
@@ -79,6 +154,7 @@ class DerivePipeline:
                        start_date=start_date,
                        end_date=end_date,
                        tables=tables_to_process,
+                       available_sources=available_sources,
                        force=force,
                        dry_run=dry_run)
             
@@ -129,6 +205,60 @@ class DerivePipeline:
         
         return result
     
+    async def _detect_available_sources(self, start_date: date, end_date: date) -> Set[str]:
+        """Detect which data sources have data for the given date range."""
+        try:
+            conn = await get_connection()
+            
+            # Check which sources have game data
+            available_sources = set()
+            
+            sources_query = """
+                SELECT DISTINCT source 
+                FROM games 
+                WHERE game_date_local >= $1 AND game_date_local <= $2
+            """
+            rows = await conn.fetch(sources_query, start_date, end_date)
+            game_sources = {row['source'] for row in rows}
+            
+            # Check for PBP data (NBA Stats specialty)
+            pbp_query = """
+                SELECT COUNT(*) as count 
+                FROM pbp_events p
+                JOIN games g ON p.game_id = g.game_id 
+                WHERE g.game_date_local >= $1 AND g.game_date_local <= $2
+                  AND p.source = 'nba_stats'
+            """
+            pbp_row = await conn.fetchrow(pbp_query, start_date, end_date)
+            has_pbp = pbp_row['count'] > 0
+            
+            # Add sources based on available data
+            if 'bref' in game_sources:
+                available_sources.add('bref')
+            if 'nba_stats' in game_sources:
+                available_sources.add('nba_stats')
+            if 'gamebooks' in game_sources:
+                available_sources.add('gamebooks')
+                
+            # Only include NBA Stats if we actually have PBP data
+            if has_pbp:
+                available_sources.add('nba_stats')
+            elif 'nba_stats' in available_sources:
+                logger.warning("NBA Stats games found but no PBP data", 
+                             date_range=f"{start_date} to {end_date}")
+            
+            logger.info("Detected available sources", 
+                       sources=available_sources, 
+                       date_range=f"{start_date} to {end_date}",
+                       has_pbp=has_pbp)
+            
+            return available_sources
+            
+        except Exception as e:
+            logger.error("Failed to detect available sources", error=str(e))
+            # Return empty set to be safe
+            return set()
+
     async def _derive_q1_window(
         self,
         start_date: date,

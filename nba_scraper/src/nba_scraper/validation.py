@@ -1,11 +1,11 @@
 """Data quality validation with FK checks and orphaned record detection."""
 
-from datetime import datetime, timedelta
-from typing import Dict, List, Optional, Set, Tuple
+from datetime import datetime, timedelta, UTC
+from typing import Dict, List, Optional, Set, Tuple, Any
 from dataclasses import dataclass
 
 from .db import get_connection
-from .logging import get_logger
+from .nba_logging import get_logger
 
 logger = get_logger(__name__)
 
@@ -19,7 +19,7 @@ class ValidationResult:
     record_count: int
     invalid_count: int
     issues: List[str]
-    details: Dict[str, any] = None
+    details: Dict[str, Any] = None
 
 
 class DataQualityValidator:
@@ -35,7 +35,7 @@ class DataQualityValidator:
             List of validation results
         """
         results = []
-        cutoff_time = datetime.utcnow() - timedelta(hours=since_hours)
+        cutoff_time = datetime.now(UTC) - timedelta(hours=since_hours)
         
         logger.info("Starting comprehensive data validation", since_hours=since_hours)
         
@@ -628,7 +628,7 @@ class DataQualityValidator:
         
         return valid_records, errors
     
-    async def get_validation_summary(self, results: List[ValidationResult]) -> Dict[str, any]:
+    def get_validation_summary(self, results: List[ValidationResult]) -> Dict[str, Any]:
         """Generate a summary of validation results.
         
         Args:
@@ -637,36 +637,40 @@ class DataQualityValidator:
         Returns:
             Summary dictionary with key metrics
         """
-        total_checks = len(results)
-        failed_checks = sum(1 for r in results if not r.is_valid)
+        if not results:
+            return {
+                'validation_timestamp': datetime.now(UTC).isoformat(),
+                'total_checks': 0,
+                'failed_checks': 0,
+                'success_rate': 1.0,
+                'total_issues': 0,
+                'total_records_checked': 0,
+                'total_invalid_records': 0,
+                'data_quality_score': 1.0,
+                'failed_tables': []
+            }
+        
+        failed_results = [r for r in results if not r.is_valid]
         total_issues = sum(len(r.issues) for r in results)
-        total_records_checked = sum(r.record_count for r in results)
-        total_invalid_records = sum(r.invalid_count for r in results)
+        total_records = sum(r.record_count for r in results)
+        total_invalid = sum(r.invalid_count for r in results)
         
-        # Group issues by table
-        issues_by_table = {}
-        for result in results:
-            if result.issues:
-                issues_by_table[result.table_name] = len(result.issues)
+        success_rate = (len(results) - len(failed_results)) / len(results)
         
-        # Group issues by check type
-        issues_by_type = {}
-        for result in results:
-            if result.issues:
-                if result.check_type not in issues_by_type:
-                    issues_by_type[result.check_type] = 0
-                issues_by_type[result.check_type] += len(result.issues)
+        # Calculate data quality score (0-1, higher is better)
+        if total_records == 0:
+            data_quality_score = 1.0
+        else:
+            data_quality_score = max(0.0, 1.0 - (total_invalid / total_records))
         
         return {
-            "validation_timestamp": datetime.utcnow().isoformat(),
-            "total_checks": total_checks,
-            "failed_checks": failed_checks, 
-            "success_rate": (total_checks - failed_checks) / total_checks if total_checks > 0 else 1.0,
-            "total_issues": total_issues,
-            "total_records_checked": total_records_checked,
-            "total_invalid_records": total_invalid_records,
-            "data_quality_score": 1.0 - (total_invalid_records / max(total_records_checked, 1)),
-            "issues_by_table": issues_by_table,
-            "issues_by_type": issues_by_type,
-            "failed_tables": [r.table_name for r in results if not r.is_valid]
+            'validation_timestamp': datetime.now(UTC).isoformat(),
+            'total_checks': len(results),
+            'failed_checks': len(failed_results),
+            'success_rate': success_rate,
+            'total_issues': total_issues,
+            'total_records_checked': total_records,
+            'total_invalid_records': total_invalid,
+            'data_quality_score': data_quality_score,
+            'failed_tables': [r.table_name for r in failed_results]
         }

@@ -6,7 +6,7 @@ from typing import Optional, Dict, Any, List, Set
 from dataclasses import dataclass
 
 from ..models import GameStatus
-from ..logging import get_logger
+from ..nba_logging import get_logger
 from ..db import get_connection
 
 logger = get_logger(__name__)

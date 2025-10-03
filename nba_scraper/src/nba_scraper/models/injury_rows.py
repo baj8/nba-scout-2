@@ -3,7 +3,7 @@
 from datetime import datetime
 from typing import Any, Dict, Optional
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from .enums import InjuryStatus
 from .ref_rows import normalize_name_slug
@@ -23,6 +23,20 @@ class InjuryStatusRow(BaseModel):
     source: str = Field(..., description="Data source")
     source_url: str = Field(..., description="Source URL")
     
+    @model_validator(mode='before')
+    @classmethod
+    def preprocess_data(cls, data: Any) -> Any:
+        """Apply comprehensive preprocessing before field validation to prevent int/str comparison errors."""
+        if isinstance(data, dict):
+            # Import here to avoid circular imports
+            from .utils import preprocess_nba_stats_data
+            
+            # Apply NBA Stats preprocessing to handle mixed data types
+            processed_data = preprocess_nba_stats_data(data)
+            
+            return processed_data
+        return data
+    
     @field_validator('player_name_slug', mode='before')
     @classmethod
     def normalize_player_name_slug(cls, v: str) -> str:
@@ -34,18 +48,22 @@ class InjuryStatusRow(BaseModel):
     def normalize_team_tricode(cls, v: str) -> str:
         """Normalize team tricode to uppercase."""
         return v.upper() if v else v
-    
+
     @field_validator('status', mode='before')
     @classmethod
-    def normalize_status(cls, v: str) -> InjuryStatus:
-        """Normalize injury status text to enum."""
+    def normalize_status(cls, v) -> InjuryStatus:
+        """Normalize injury status from various sources."""
         if isinstance(v, InjuryStatus):
             return v
-            
-        # Clean up status text
-        status_text = v.upper().strip() if v else ''
         
-        # Handle common variations
+        # CRITICAL: Convert any input to string first to prevent int/str comparison errors
+        if v is None:
+            status_str = 'ACTIVE'
+        else:
+            # Ensure we always work with a string, regardless of input type
+            status_str = str(v).strip().upper()
+        
+        # Map various status formats to our enum
         status_map = {
             'OUT': InjuryStatus.OUT,
             'QUESTIONABLE': InjuryStatus.QUESTIONABLE,
@@ -53,12 +71,21 @@ class InjuryStatusRow(BaseModel):
             'ACTIVE': InjuryStatus.ACTIVE,
             'DNP': InjuryStatus.DNP,
             'INACTIVE': InjuryStatus.INACTIVE,
-            'DOUBTFUL': InjuryStatus.QUESTIONABLE,  # Map doubtful to questionable
-            'GTD': InjuryStatus.QUESTIONABLE,  # Game-time decision
+            'AVAILABLE': InjuryStatus.ACTIVE,
+            'HEALTHY': InjuryStatus.ACTIVE,
+            'DOUBTFUL': InjuryStatus.QUESTIONABLE,
+            'DAY_TO_DAY': InjuryStatus.QUESTIONABLE,
+            'INJURED': InjuryStatus.OUT,
+            '0': InjuryStatus.ACTIVE,  # Handle numeric status codes
+            '1': InjuryStatus.QUESTIONABLE,
+            '2': InjuryStatus.PROBABLE,
+            '3': InjuryStatus.OUT,
+            '4': InjuryStatus.DNP,
+            '5': InjuryStatus.INACTIVE,
         }
         
-        return status_map.get(status_text, InjuryStatus.ACTIVE)
-    
+        return status_map.get(status_str, InjuryStatus.ACTIVE)
+
     @classmethod
     def from_bref_notes(
         cls, 
@@ -84,7 +111,7 @@ class InjuryStatusRow(BaseModel):
             source='bref_notes',
             source_url=source_url,
         )
-    
+
     @classmethod
     def from_team_report(
         cls, 

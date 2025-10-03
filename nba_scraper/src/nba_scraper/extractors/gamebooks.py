@@ -5,7 +5,7 @@ from pathlib import Path
 
 from ..models.ref_rows import RefAssignmentRow, RefAlternateRow
 from ..models.enums import RefRole
-from ..logging import get_logger
+from ..nba_logging import get_logger
 
 logger = get_logger(__name__)
 

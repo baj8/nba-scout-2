@@ -36,6 +36,20 @@ class GameRow(BaseModel):
     
     # Team aliases cache - using ClassVar to avoid Pydantic treating it as a field
     _team_aliases: ClassVar[Optional[Dict[str, Any]]] = None
+
+    @model_validator(mode='before')
+    @classmethod
+    def preprocess_data(cls, data: Any) -> Any:
+        """Apply comprehensive preprocessing before field validation to prevent int/str comparison errors."""
+        if isinstance(data, dict):
+            # Import here to avoid circular imports
+            from .utils import preprocess_nba_stats_data
+            
+            # Apply NBA Stats preprocessing to handle mixed data types
+            processed_data = preprocess_nba_stats_data(data)
+            
+            return processed_data
+        return data
     
     @classmethod
     def _load_team_aliases(cls) -> Dict[str, Any]:
@@ -127,7 +141,29 @@ class GameRow(BaseModel):
         if not re.match(r'^\d{4}-\d{2}$', v):
             raise ValueError(f"Invalid season format: {v}. Expected format: '2023-24'")
         return v
-    
+
+    @field_validator('status', mode='before')
+    @classmethod
+    def validate_status(cls, v) -> GameStatus:
+        """Validate and normalize game status."""
+        if isinstance(v, GameStatus):
+            return v
+        
+        # CRITICAL: Convert any input to string first to prevent int/str comparison errors
+        if v is None:
+            status_str = 'SCHEDULED'
+        else:
+            # Ensure we always work with a string, regardless of input type
+            status_str = str(v).strip()
+        
+        normalized_status = cls._normalize_status(status_str)
+        
+        try:
+            return GameStatus(normalized_status)
+        except ValueError:
+            # If the normalized status is not a valid enum value, return default
+            return GameStatus.SCHEDULED
+
     @model_validator(mode='after')
     def validate_game_data(self) -> 'GameRow':
         """Validate game data consistency."""
@@ -151,6 +187,10 @@ class GameRow(BaseModel):
     @classmethod
     def from_nba_stats(cls, data: Dict[str, Any], source_url: str) -> 'GameRow':
         """Create GameRow from NBA Stats API data."""
+        # Preprocess data to handle mixed data types before validation
+        from .utils import preprocess_nba_stats_data
+        data = preprocess_nba_stats_data(data)
+        
         # Parse NBA Stats scoreboard format
         game_date_est = data.get('GAME_DATE_EST', '')
         matchup = data.get('MATCHUP', '')
@@ -240,7 +280,7 @@ class GameRow(BaseModel):
         
         # Ensure we have valid tricodes (log warning if empty)
         if not home_team or not away_team:
-            from ..logging import get_logger
+            from ..nba_logging import get_logger
             logger = get_logger(__name__)
             logger.warning("Missing team tricodes in NBA Stats data", 
                           game_id=data.get('GAME_ID'), 
@@ -274,6 +314,20 @@ class GameRow(BaseModel):
         local_tz = tz.gettz(arena_tz)
         local_dt = game_date_utc.astimezone(local_tz)
         
+        # Safely convert period to int
+        period_raw = data.get('PERIOD', 0)
+        try:
+            period = int(period_raw) if period_raw is not None else 0
+        except (ValueError, TypeError):
+            period = 0
+        
+        # Safely handle status field - ensure it's always a string
+        status_raw = data.get('GAME_STATUS_TEXT')
+        if status_raw is None:
+            status_value = 'SCHEDULED'
+        else:
+            status_value = str(status_raw).strip() if str(status_raw).strip() else 'SCHEDULED'
+
         return cls(
             game_id=str(data.get('GAME_ID', '')),
             season=season,
@@ -284,8 +338,8 @@ class GameRow(BaseModel):
             away_team_tricode=away_team,
             home_team_id=str(data.get('HOME_TEAM_ID', '')),
             away_team_id=str(data.get('VISITOR_TEAM_ID', '') or data.get('AWAY_TEAM_ID', '')),
-            status=GameStatus(cls._normalize_status(data.get('GAME_STATUS_TEXT', 'SCHEDULED'))),
-            period=int(data.get('PERIOD', 0)),
+            status=status_value,  # Always pass a clean string value
+            period=period,
             time_remaining=data.get('TIME', ''),
             source='nba_stats',
             source_url=source_url,

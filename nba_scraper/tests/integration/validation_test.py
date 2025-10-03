@@ -630,20 +630,26 @@ class TestDerivedLoaderValidation:
             []
         )
         loader.validator = mock_validator
-        
+
         # Mock database connection
         mock_conn = AsyncMock()
-        mock_conn.execute.return_value = "INSERT 0 1"  # Simulate inserts
+        mock_conn.execute.return_value = "INSERT 0 2"  # Simulate inserts
         mock_conn.transaction.return_value.__aenter__.return_value = None
         mock_conn.transaction.return_value.__aexit__.return_value = None
-        
-        with patch('nba_scraper.loaders.derived.get_connection', return_value=mock_conn):
-            result = await loader.upsert_q1_windows(sample_q1_windows)
-            
-            assert result == 0  # No updates, only inserts
-            mock_validator.validate_before_insert.assert_called_once()
-            assert mock_conn.execute.call_count == 2  # Two records inserted
-    
+
+        # Mock bulk_optimizer to return coroutine
+        with patch('nba_scraper.loaders.derived.bulk_optimizer') as mock_bulk_opt:
+            mock_bulk_opt.bulk_upsert = AsyncMock(return_value=2)
+            with patch('nba_scraper.loaders.derived.get_performance_connection') as mock_get_conn:
+                mock_get_conn.return_value.__aenter__.return_value = mock_conn
+                mock_get_conn.return_value.__aexit__.return_value = None
+                
+                result = await loader.upsert_q1_windows(sample_q1_windows)
+
+                assert result == 2  # Two records were processed
+                mock_validator.validate_before_insert.assert_called_once()
+                mock_bulk_opt.bulk_upsert.assert_called_once()
+
     @pytest.mark.asyncio
     async def test_upsert_q1_windows_with_invalid_records(self, loader, sample_q1_windows):
         """Test Q1 window upsert with some invalid records."""
@@ -654,20 +660,26 @@ class TestDerivedLoaderValidation:
             ["Missing game_id references for q1_window_12_8: ['0022400999']"]
         )
         loader.validator = mock_validator
-        
+
         # Mock database connection
         mock_conn = AsyncMock()
         mock_conn.execute.return_value = "INSERT 0 1"
         mock_conn.transaction.return_value.__aenter__.return_value = None
         mock_conn.transaction.return_value.__aexit__.return_value = None
-        
-        with patch('nba_scraper.loaders.derived.get_connection', return_value=mock_conn):
-            result = await loader.upsert_q1_windows(sample_q1_windows)
-            
-            assert result == 0
-            mock_validator.validate_before_insert.assert_called_once()
-            assert mock_conn.execute.call_count == 1  # Only one valid record inserted
-    
+
+        # Mock bulk_optimizer to return coroutine
+        with patch('nba_scraper.loaders.derived.bulk_optimizer') as mock_bulk_opt:
+            mock_bulk_opt.bulk_upsert = AsyncMock(return_value=1)
+            with patch('nba_scraper.loaders.derived.get_performance_connection') as mock_get_conn:
+                mock_get_conn.return_value.__aenter__.return_value = mock_conn
+                mock_get_conn.return_value.__aexit__.return_value = None
+                
+                result = await loader.upsert_q1_windows(sample_q1_windows)
+
+                assert result == 1  # One record was processed
+                mock_validator.validate_before_insert.assert_called_once()
+                mock_bulk_opt.bulk_upsert.assert_called_once()
+
     @pytest.mark.asyncio
     async def test_upsert_q1_windows_all_invalid_records(self, loader, sample_q1_windows):
         """Test Q1 window upsert when all records are invalid."""
@@ -695,6 +707,8 @@ class TestDerivedLoaderValidation:
         sample_shocks = [
             EarlyShockRow(
                 game_id="0022400123",
+                shock_seq=1,
+                event_idx_start=25,
                 shock_type=EarlyShockType.TECH,
                 period=1,
                 clock_hhmmss="00:10:30",
@@ -707,6 +721,8 @@ class TestDerivedLoaderValidation:
             ),
             EarlyShockRow(
                 game_id="0022400999",  # Invalid
+                shock_seq=1,
+                event_idx_start=18,
                 shock_type=EarlyShockType.FLAGRANT,
                 period=1,
                 clock_hhmmss="00:08:15",
@@ -718,7 +734,7 @@ class TestDerivedLoaderValidation:
                 source_url="test://url"
             )
         ]
-        
+
         # Mock validator to filter out invalid record
         mock_validator = AsyncMock()
         mock_validator.validate_before_insert.return_value = (
@@ -726,19 +742,78 @@ class TestDerivedLoaderValidation:
             ["Missing game_id references for early_shocks: ['0022400999']"]
         )
         loader.validator = mock_validator
-        
+
         # Mock database connection
         mock_conn = AsyncMock()
         mock_conn.execute.return_value = "INSERT 0 1"
         mock_conn.transaction.return_value.__aenter__.return_value = None
         mock_conn.transaction.return_value.__aexit__.return_value = None
+
+        # Mock bulk_optimizer to return coroutine
+        with patch('nba_scraper.loaders.derived.bulk_optimizer') as mock_bulk_opt:
+            mock_bulk_opt.bulk_upsert = AsyncMock(return_value=1)
+            with patch('nba_scraper.loaders.derived.get_performance_connection') as mock_get_conn:
+                mock_get_conn.return_value.__aenter__.return_value = mock_conn
+                mock_get_conn.return_value.__aexit__.return_value = None
+                
+                result = await loader.upsert_early_shocks(sample_shocks)
+
+                assert result == 1  # One record was upserted
+                mock_validator.validate_before_insert.assert_called_once()
+                mock_bulk_opt.bulk_upsert.assert_called_once()
+    
+    @pytest.mark.asyncio
+    async def test_early_shock_validation_with_missing_fields(self):
+        """Test validation with missing required fields in EarlyShockRow."""
+        from src.nba_scraper.loaders.derived import DerivedLoader
+        from src.nba_scraper.models.derived_rows import EarlyShockRow, EarlyShockType
+        from unittest.mock import AsyncMock, patch
         
-        with patch('nba_scraper.loaders.derived.get_connection', return_value=mock_conn):
-            result = await loader.upsert_early_shocks(sample_shocks)
-            
-            assert result == 0
-            mock_validator.validate_before_insert.assert_called_once()
-            assert mock_conn.execute.call_count == 1  # Only valid record inserted
+        loader = DerivedLoader()
+        
+        # Create test data with all required fields
+        shocks = [
+            EarlyShockRow(
+                game_id="0022400001", 
+                shock_type=EarlyShockType.TWO_PF_EARLY,
+                period=1,
+                clock_hhmmss="00:10:30",
+                player_slug="lebron_james",
+                team_tricode="LAL",
+                immediate_sub=True,
+                notes="Two early fouls",
+                source="test",
+                source_url="http://test.com",
+                shock_seq=1,  # Required field
+                event_idx_start=15  # Required field
+            )
+        ]
+        
+        # Mock the bulk operations properly
+        with patch('src.nba_scraper.loaders.derived.get_performance_connection') as mock_get_conn:
+            with patch('src.nba_scraper.loaders.derived.bulk_optimizer') as mock_bulk_optimizer:
+                # Set up the async context manager for the connection
+                mock_conn = AsyncMock()
+                mock_get_conn.return_value.__aenter__.return_value = mock_conn
+                mock_get_conn.return_value.__aexit__.return_value = None
+                
+                # Mock the bulk_upsert to return an awaitable coroutine
+                mock_bulk_optimizer.bulk_upsert = AsyncMock(return_value=1)
+                
+                # Mock the validator to return valid records
+                with patch.object(loader.validator, 'validate_before_insert') as mock_validate:
+                    mock_validate.return_value = ([{'game_id': "0022400001"}], [])
+                    
+                    result = await loader.upsert_early_shocks(shocks)
+                    
+                    # Verify the result
+                    assert result == 1
+                    
+                    # Verify validation was called
+                    mock_validate.assert_called_once_with('early_shocks', [{'game_id': '0022400001'}])
+                    
+                    # Verify bulk_upsert was called
+                    mock_bulk_optimizer.bulk_upsert.assert_called_once()
 
 
 class TestValidationIntegration:

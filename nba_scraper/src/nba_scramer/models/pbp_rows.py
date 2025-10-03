@@ -84,7 +84,7 @@ class PbpEventRow(BaseModel):
     def normalize_team_tricode(cls, v: Optional[str]) -> Optional[str]:
         """Normalize team tricode to uppercase."""
         return v.upper() if v else None
-    
+
     @field_validator('event_type', mode='before')
     @classmethod
     def normalize_event_type(cls, v) -> EventType:
@@ -106,7 +106,7 @@ class PbpEventRow(BaseModel):
             else:
                 # Ensure we always work with a string, regardless of input type
                 event_str = str(v).strip()
-        
+
         # Map NBA Stats event types to our enum - handle both string and integer inputs
         event_map = {
             # Integer string mappings (from NBA Stats API)
@@ -167,7 +167,7 @@ class PbpEventRow(BaseModel):
         
         # Return mapped value or default to SHOT_MADE if not found
         return event_map.get(event_str, EventType.SHOT_MADE)
-    
+
     @classmethod
     def from_nba_stats(
         cls, 
@@ -277,42 +277,3 @@ class PbpEventRow(BaseModel):
             source='nba_stats',
             source_url=source_url,
         )
-    
-    @classmethod
-    def enrich_with_shot_chart(cls, pbp_row: 'PbpEventRow', shot_data: Dict[str, Any]) -> 'PbpEventRow':
-        """Enrich PBP row with shot chart data."""
-        if pbp_row.event_type not in [EventType.SHOT_MADE, EventType.SHOT_MISSED]:
-            return pbp_row
-        
-        # Update shot location and zone
-        pbp_row.shot_distance_ft = shot_data.get('SHOT_DISTANCE')
-        pbp_row.shot_x = shot_data.get('LOC_X')
-        pbp_row.shot_y = shot_data.get('LOC_Y')
-        
-        # Classify shot zone based on coordinates
-        shot_zone = cls._classify_shot_zone(
-            pbp_row.shot_x, 
-            pbp_row.shot_y, 
-            pbp_row.shot_distance_ft
-        )
-        pbp_row.shot_zone = shot_zone
-        
-        return pbp_row
-    
-    @staticmethod
-    def _classify_shot_zone(x: Optional[float], y: Optional[float], distance: Optional[float]) -> Optional[ShotZone]:
-        """Classify shot zone based on coordinates."""
-        if distance is None:
-            return None
-        
-        # Simple zone classification based on distance
-        # This would be more sophisticated in production
-        if distance <= 4:
-            return ShotZone.RESTRICTED_AREA
-        elif distance <= 10:
-            return ShotZone.PAINT
-        elif distance <= 23:
-            return ShotZone.MID_RANGE
-        else:
-            # Could further classify corner vs above break 3s using x,y coordinates
-            return ShotZone.ABOVE_BREAK_3

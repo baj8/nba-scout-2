@@ -19,7 +19,7 @@ from ..extractors import (
 from ..io_clients import BRefClient, NBAStatsClient, GamebooksClient
 from ..loaders import GameLoader, RefLoader, LineupLoader, PbpLoader
 from ..transformers import GameTransformer, RefTransformer, LineupTransformer, PbpTransformer
-from ..logging import get_logger
+from ..nba_logging import get_logger
 from ..rate_limit import RateLimiter
 
 logger = get_logger(__name__)

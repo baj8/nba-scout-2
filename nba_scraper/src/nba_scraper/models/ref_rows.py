@@ -3,7 +3,7 @@
 import re
 from typing import Any, Dict, Optional
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 from rapidfuzz import fuzz
 
 from .enums import RefRole
@@ -14,17 +14,12 @@ def normalize_name_slug(name: str) -> str:
     if not name:
         return ""
     
-    # If already in PascalCase format (contains uppercase letters in the middle), preserve it
-    if re.match(r'^[A-Z][a-z]*([A-Z][a-z]*)+$', name):
-        return name
+    # Remove punctuation and normalize spacing
+    clean_name = re.sub(r'[^\w\s]', '', name)
     
-    # Remove common prefixes/suffixes and punctuation
-    name = re.sub(r'[^\w\s]', '', name)
-    name = re.sub(r'\b(Jr|Sr|III|II)\b', '', name, flags=re.IGNORECASE)
-    
-    # Split into words and capitalize each
-    words = name.strip().split()
-    return ''.join(word.capitalize() for word in words if word)
+    # Convert to PascalCase
+    words = clean_name.split()
+    return ''.join(word.capitalize() for word in words)
 
 
 class RefAssignmentRow(BaseModel):
@@ -38,12 +33,57 @@ class RefAssignmentRow(BaseModel):
     source: str = Field(..., description="Data source")
     source_url: str = Field(..., description="Source URL")
     
+    @model_validator(mode='before')
+    @classmethod
+    def preprocess_data(cls, data: Any) -> Any:
+        """Apply comprehensive preprocessing before field validation to prevent int/str comparison errors."""
+        if isinstance(data, dict):
+            # Import here to avoid circular imports
+            from .utils import preprocess_nba_stats_data
+            
+            # Apply NBA Stats preprocessing to handle mixed data types
+            processed_data = preprocess_nba_stats_data(data)
+            
+            return processed_data
+        return data
+
     @field_validator('referee_name_slug', mode='before')
     @classmethod
     def normalize_name_slug(cls, v: str) -> str:
         """Normalize referee name to slug format."""
         return normalize_name_slug(v)
-    
+
+    @field_validator('role', mode='before')
+    @classmethod
+    def normalize_role(cls, v) -> RefRole:
+        """Normalize referee role from various sources."""
+        if isinstance(v, RefRole):
+            return v
+        
+        # CRITICAL: Convert any input to string first to prevent int/str comparison errors
+        if v is None:
+            role_str = 'REFEREE'
+        else:
+            # Ensure we always work with a string, regardless of input type
+            role_str = str(v).strip().upper()
+        
+        # Map various role formats to our enum
+        role_map = {
+            'CREW_CHIEF': RefRole.CREW_CHIEF,
+            'CREW CHIEF': RefRole.CREW_CHIEF,
+            'CHIEF': RefRole.CREW_CHIEF,
+            'REFEREE': RefRole.REFEREE,
+            'REF': RefRole.REFEREE,
+            'UMPIRE': RefRole.UMPIRE,
+            'UMP': RefRole.UMPIRE,
+            'OFFICIAL': RefRole.OFFICIAL,
+            '1': RefRole.CREW_CHIEF,  # Handle numeric role codes
+            '2': RefRole.REFEREE,
+            '3': RefRole.UMPIRE,
+        }
+        
+        return role_map.get(role_str, RefRole.REFEREE)
+
     @classmethod
     def from_gamebook(
         cls, 
@@ -85,6 +125,20 @@ class RefAlternateRow(BaseModel):
     source: str = Field(..., description="Data source")
     source_url: str = Field(..., description="Source URL")
     
+    @model_validator(mode='before')
+    @classmethod
+    def preprocess_data(cls, data: Any) -> Any:
+        """Apply comprehensive preprocessing before field validation to prevent int/str comparison errors."""
+        if isinstance(data, dict):
+            # Import here to avoid circular imports
+            from .utils import preprocess_nba_stats_data
+            
+            # Apply NBA Stats preprocessing to handle mixed data types
+            processed_data = preprocess_nba_stats_data(data)
+            
+            return processed_data
+        return data
+    
     @field_validator('referee_name_slug', mode='before')
     @classmethod
     def normalize_name_slug(cls, v: str) -> str:
@@ -116,10 +170,10 @@ def fuzzy_match_referee_name(name: str, known_refs: list[str], threshold: int = 
     best_match = None
     best_score = 0
     
-    for known_ref in known_refs:
-        score = fuzz.ratio(name.lower(), known_ref.lower())
+    for ref in known_refs:
+        score = fuzz.ratio(name.lower(), ref.lower())
         if score > best_score and score >= threshold:
             best_score = score
-            best_match = known_ref
+            best_match = ref
     
     return best_match

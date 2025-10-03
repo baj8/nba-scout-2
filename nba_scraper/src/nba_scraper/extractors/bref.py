@@ -3,7 +3,7 @@
 from typing import Any, Dict, List
 
 from ..models import OutcomesRow, StartingLineupRow, InjuryStatusRow
-from ..logging import get_logger
+from ..nba_logging import get_logger
 
 logger = get_logger(__name__)
 

@@ -6,7 +6,7 @@ from typing import Dict, Any, Optional
 from dataclasses import dataclass
 
 from ..validation import DataQualityValidator
-from ..logging import get_logger
+from ..nba_logging import get_logger
 from ..db import get_connection
 
 logger = get_logger(__name__)

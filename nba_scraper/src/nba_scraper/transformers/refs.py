@@ -64,6 +64,9 @@ class RefTransformer(BaseTransformer[RefAssignmentRow]):
         # NBA Stats typically has officials in game info
         if 'officials' in raw_data:
             for i, official in enumerate(raw_data['officials']):
+                # CRITICAL FIX: Apply preprocessing to prevent int/str enum comparison errors
+                official = self._preprocess_nba_stats_data(official)
+                
                 assignment = RefAssignmentRow(
                     game_id=game_id,
                     ref_name=self._safe_get(official, 'FIRST_NAME', '') + ' ' + self._safe_get(official, 'LAST_NAME', ''),

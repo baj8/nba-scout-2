@@ -9,7 +9,7 @@ from dataclasses import dataclass
 
 from ..models.game_rows import GameRow
 from ..models.derived_rows import ScheduleTravelRow
-from ..logging import get_logger
+from ..nba_logging import get_logger
 
 logger = get_logger(__name__)
 

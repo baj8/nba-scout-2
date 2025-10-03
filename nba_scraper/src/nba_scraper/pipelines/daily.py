@@ -9,7 +9,7 @@ from .season_pipeline import SeasonPipeline
 from .game_pipeline import GamePipeline
 from ..io_clients import BRefClient, NBAStatsClient, GamebooksClient
 from ..rate_limit import RateLimiter
-from ..logging import get_logger
+from ..nba_logging import get_logger
 from ..db import get_connection
 
 logger = get_logger(__name__)

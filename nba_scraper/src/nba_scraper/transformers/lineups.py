@@ -89,6 +89,9 @@ class LineupTransformer(BaseTransformer[StartingLineupRow]):
         # NBA Stats lineup format
         if 'lineups' in raw_data:
             for lineup_data in raw_data['lineups']:
+                # CRITICAL FIX: Apply preprocessing to prevent int/str enum comparison errors
+                lineup_data = self._preprocess_nba_stats_data(lineup_data)
+                
                 lineup = StartingLineupRow.from_nba_stats(
                     game_id=game_id,
                     team_tricode=self._safe_get(lineup_data, 'TEAM_ABBREVIATION', 'UNK'),

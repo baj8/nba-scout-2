@@ -5,7 +5,7 @@ from typing import List
 
 from ..models.derived_rows import Q1WindowRow, EarlyShockRow, ScheduleTravelRow
 from ..db import get_connection
-from ..logging import get_logger
+from ..nba_logging import get_logger
 from ..validation import DataQualityValidator
 from ..performance import (
     get_performance_connection, bulk_optimizer, parallel_processor,

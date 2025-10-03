@@ -8,7 +8,7 @@ from enum import Enum
 from typing import Any, Callable, Dict, Optional, TypeVar, Union
 from functools import wraps
 
-from .logging import get_logger, metrics, alert_manager
+from .nba_logging import get_logger, metrics, alert_manager
 
 logger = get_logger(__name__)
 

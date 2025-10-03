@@ -14,7 +14,7 @@ import asyncpg
 from asyncpg import Connection, Pool
 
 from .config import get_settings
-from .logging import get_logger, metrics, monitor_function
+from .nba_logging import get_logger, metrics, monitor_function
 
 logger = get_logger(__name__)
 

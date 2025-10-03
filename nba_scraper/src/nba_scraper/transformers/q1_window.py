@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from ..models.pbp_rows import PbpEventRow
 from ..models.derived_rows import Q1WindowRow
 from ..models.enums import EventType, FoulType
-from ..logging import get_logger
+from ..nba_logging import get_logger
 
 logger = get_logger(__name__)
 

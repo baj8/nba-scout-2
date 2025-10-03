@@ -9,7 +9,7 @@ from typing import Dict, List, Optional, Union
 from urllib.parse import urlparse
 
 from dotenv import load_dotenv
-from pydantic import Field, field_validator, model_validator, SecretStr
+from pydantic import Field, field_validator, model_validator, SecretStr, ConfigDict
 from pydantic_settings import BaseSettings
 
 
@@ -132,9 +132,7 @@ class APIKeysConfig(BaseSettings):
         description="PagerDuty integration key"
     )
 
-    class Config:
-        """Pydantic configuration for API keys."""
-        env_prefix = "API_"
+    model_config = ConfigDict(env_prefix="API_")
 
 
 class CacheConfig(BaseSettings):
@@ -157,9 +155,7 @@ class CacheConfig(BaseSettings):
     enable_query_cache: bool = Field(default=True, description="Enable database query caching")
     cache_compression: bool = Field(default=True, description="Enable cache compression")
 
-    class Config:
-        """Pydantic configuration for cache."""
-        env_prefix = "CACHE_"
+    model_config = ConfigDict(env_prefix="CACHE_")
 
 
 class MonitoringConfig(BaseSettings):
@@ -182,9 +178,7 @@ class MonitoringConfig(BaseSettings):
     latency_p99_threshold: float = Field(default=5.0, description="P99 latency threshold in seconds")
     queue_size_threshold: int = Field(default=1000, description="Queue size alert threshold")
 
-    class Config:
-        """Pydantic configuration for monitoring."""
-        env_prefix = "MONITORING_"
+    model_config = ConfigDict(env_prefix="MONITORING_")
 
 
 class Settings(BaseSettings):
@@ -289,11 +283,11 @@ class Settings(BaseSettings):
         description="Enable asynchronous processing"
     )
 
-    class Config:
-        """Pydantic configuration."""
-        env_file = ".env"
-        env_file_encoding = "utf-8"
-        case_sensitive = False
+    model_config = ConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        case_sensitive=False
+    )
         
     @model_validator(mode='after')
     def validate_environment_settings(self):
@@ -327,6 +321,15 @@ class Settings(BaseSettings):
         if v.upper() not in valid_levels:
             raise ValueError(f"Log level must be one of: {valid_levels}")
         return v.upper()
+
+    @field_validator('allowed_hosts', 'cors_origins', mode='before')
+    @classmethod
+    def validate_string_list(cls, v):
+        """Convert comma-separated string to list for list fields."""
+        if isinstance(v, str):
+            # Split by comma and strip whitespace
+            return [item.strip() for item in v.split(',') if item.strip()]
+        return v
 
     def get_database_url(self) -> str:
         """Get the complete database URL with all parameters."""

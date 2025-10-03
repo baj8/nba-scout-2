@@ -5,7 +5,7 @@ import time
 from typing import Optional
 
 from .config import get_settings
-from .logging import get_logger
+from .nba_logging import get_logger
 
 logger = get_logger(__name__)
 

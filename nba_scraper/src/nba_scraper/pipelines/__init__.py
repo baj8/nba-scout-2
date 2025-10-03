@@ -7,6 +7,13 @@ from .backfill import BackfillPipeline
 from .daily import DailyPipeline
 from .derive import DerivePipeline
 from .validate import ValidationPipeline
+from .source_pipelines import (
+    NBAStatsPipeline,
+    BRefPipeline,
+    GamebooksPipeline,
+    SourcePipelineOrchestrator,
+    SourcePipelineResult
+)
 
 __all__ = [
     'GamePipeline',
@@ -15,5 +22,10 @@ __all__ = [
     'BackfillPipeline',
     'DailyPipeline',
     'DerivePipeline',
-    'ValidationPipeline'
+    'ValidationPipeline',
+    'NBAStatsPipeline',
+    'BRefPipeline',
+    'GamebooksPipeline',
+    'SourcePipelineOrchestrator',
+    'SourcePipelineResult'
 ]

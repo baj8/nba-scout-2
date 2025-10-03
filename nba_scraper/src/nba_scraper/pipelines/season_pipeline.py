@@ -7,7 +7,7 @@ from dataclasses import dataclass
 
 from .game_pipeline import GamePipeline, GamePipelineResult
 from ..models import GameStatus
-from ..logging import get_logger
+from ..nba_logging import get_logger
 from ..rate_limit import RateLimiter
 
 logger = get_logger(__name__)

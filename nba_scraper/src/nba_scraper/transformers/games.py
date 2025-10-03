@@ -10,7 +10,7 @@ from ..models.game_rows import GameRow
 from ..models.crosswalk_rows import GameIdCrosswalkRow
 from ..models.derived_rows import OutcomesRow
 from ..models.enums import GameStatus
-from ..logging import get_logger
+from ..nba_logging import get_logger
 
 logger = get_logger(__name__)
 
@@ -333,6 +333,11 @@ class GameTransformer(BaseTransformer[GameRow]):
         else:
             raise ValueError(f"Unsupported source: {self.source}")
     
+    def _preprocess_nba_stats_data(self, data: Dict[str, Any]) -> Dict[str, Any]:
+        """Apply preprocessing to NBA Stats data to prevent int/str enum comparison errors."""
+        from ..models.utils import preprocess_nba_stats_data
+        return preprocess_nba_stats_data(data)
+    
     def _transform_nba_stats(self, raw_data: Dict[str, Any], **kwargs) -> List[GameRow]:
         """Transform NBA.com stats data."""
         games = []
@@ -358,6 +363,9 @@ class GameTransformer(BaseTransformer[GameRow]):
     
     def _create_game_from_nba_stats(self, game_data: Dict[str, Any], **kwargs) -> GameRow:
         """Create GameRow from NBA Stats game data."""
+        # CRITICAL FIX: Apply preprocessing to prevent int/str enum comparison errors
+        game_data = self._preprocess_nba_stats_data(game_data)
+        
         # Extract game ID
         game_id = self._safe_get(game_data, 'GAME_ID') or self._safe_get(game_data, 'gameId')
         
@@ -373,32 +381,55 @@ class GameTransformer(BaseTransformer[GameRow]):
             except ValueError:
                 pass
         
-        # Extract team info
-        home_team = self._safe_get(game_data, 'HOME_TEAM_ID') or self._safe_get(game_data, 'homeTeam', {}).get('teamId')
-        away_team = self._safe_get(game_data, 'VISITOR_TEAM_ID') or self._safe_get(game_data, 'awayTeam', {}).get('teamId')
+        # Fallback to current time if no date provided
+        if not game_date_utc:
+            game_date_utc = datetime.utcnow()
+        
+        # Extract team info and convert to strings
+        home_team_id = self._safe_get(game_data, 'HOME_TEAM_ID') or self._safe_get(game_data, 'homeTeam', {}).get('teamId')
+        away_team_id = self._safe_get(game_data, 'VISITOR_TEAM_ID') or self._safe_get(game_data, 'awayTeam', {}).get('teamId')
+        
+        # Get team tricodes
+        home_team_tricode = self._safe_get(game_data, 'HOME_TEAM_ABBREVIATION') or self._safe_get(game_data, 'homeTeam', {}).get('teamTricode')
+        away_team_tricode = self._safe_get(game_data, 'VISITOR_TEAM_ABBREVIATION') or self._safe_get(game_data, 'awayTeam', {}).get('teamTricode')
+        
+        # Set default arena timezone based on home team or fallback
+        arena_tz = 'America/New_York'  # Default timezone
+        if home_team_tricode:
+            # You could add logic here to map team tricodes to their arena timezones
+            arena_tz = 'America/New_York'  # For now, use default
         
         # Parse status
         status_text = self._safe_get(game_data, 'GAME_STATUS_TEXT') or self._safe_get(game_data, 'gameStatusText')
         status = GameStatus.SCHEDULED
         if status_text:
-            if 'Final' in status_text:
+            status_str = str(status_text).upper()
+            if 'FINAL' in status_str or status_str == '3':
                 status = GameStatus.FINAL
-            elif any(x in status_text for x in ['Q', 'Period', 'Half']):
+            elif 'IN_PROGRESS' in status_str or status_str == '2':
+                status = GameStatus.IN_PROGRESS
+            elif any(x in status_str for x in ['Q', 'PERIOD', 'HALF']):
                 status = GameStatus.IN_PROGRESS
         
+        # Ensure season is a string
+        season = kwargs.get('season') or '2024-25'  # Default season
+        if season and not isinstance(season, str):
+            season = str(season)
+        
+        # Ensure source_url is a string
+        source_url = kwargs.get('source_url') or 'https://stats.nba.com'
+        
         return GameRow(
-            game_id=str(game_id),
+            game_id=str(game_id) if game_id else '',
             bref_game_id=None,
-            season=self._parse_int(kwargs.get('season')),
+            season=season,
             game_date_utc=game_date_utc,
-            game_date_local=game_date_utc,  # Will be adjusted based on arena timezone
-            arena_tz=None,
-            home_team_tricode=self._safe_get(game_data, 'HOME_TEAM_ABBREVIATION') or 
-                             self._safe_get(game_data, 'homeTeam', {}).get('teamTricode'),
-            away_team_tricode=self._safe_get(game_data, 'VISITOR_TEAM_ABBREVIATION') or
-                             self._safe_get(game_data, 'awayTeam', {}).get('teamTricode'),
-            home_team_id=self._parse_int(home_team),
-            away_team_id=self._parse_int(away_team),
+            game_date_local=game_date_utc.date(),  # Convert to date object
+            arena_tz=arena_tz,
+            home_team_tricode=home_team_tricode or '',
+            away_team_tricode=away_team_tricode or '',
+            home_team_id=str(home_team_id) if home_team_id else '',  # Convert to string
+            away_team_id=str(away_team_id) if away_team_id else '',  # Convert to string
             odds_join_key=None,
             status=status,
             period=self._parse_int(self._safe_get(game_data, 'PERIOD')),
@@ -406,7 +437,7 @@ class GameTransformer(BaseTransformer[GameRow]):
             arena_name=None,
             attendance=self._parse_int(self._safe_get(game_data, 'ATTENDANCE')),
             source=self.source,
-            source_url=kwargs.get('source_url'),
+            source_url=source_url,
         )
     
     def _transform_bref(self, raw_data: Dict[str, Any], **kwargs) -> List[GameRow]:

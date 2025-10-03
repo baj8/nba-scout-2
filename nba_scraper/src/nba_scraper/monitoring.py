@@ -8,7 +8,7 @@ from typing import Dict, Any, Optional
 from urllib.parse import parse_qs, urlparse
 
 from .config import get_settings
-from .logging import health_checker, metrics, get_logger
+from .nba_logging import health_checker, metrics, get_logger
 
 logger = get_logger(__name__)
 

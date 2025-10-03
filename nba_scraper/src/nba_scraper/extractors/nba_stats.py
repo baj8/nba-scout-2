@@ -4,7 +4,8 @@ from datetime import datetime
 from typing import Any, Dict, List
 
 from ..models import GameRow, PbpEventRow, StartingLineupRow
-from ..logging import get_logger
+from ..models.utils import preprocess_nba_stats_data
+from ..nba_logging import get_logger
 
 logger = get_logger(__name__)
 
@@ -28,6 +29,9 @@ def extract_games_from_scoreboard(
         if 'resultSets' not in scoreboard_data:
             logger.warning("No resultSets in scoreboard data")
             return games
+
+        # Preprocess the entire scoreboard response to handle mixed data types
+        scoreboard_data = preprocess_nba_stats_data(scoreboard_data)
         
         # Find GameHeader result set
         game_header_set = None
@@ -47,6 +51,9 @@ def extract_games_from_scoreboard(
             try:
                 # Convert row to dictionary
                 game_dict = dict(zip(headers, row))
+                
+                # Additional preprocessing for the individual game data
+                game_dict = preprocess_nba_stats_data(game_dict)
                 
                 # Create GameRow using the from_nba_stats class method
                 game_row = GameRow.from_nba_stats(game_dict, source_url)
@@ -86,6 +93,9 @@ def extract_pbp_from_response(
         if 'resultSets' not in pbp_data:
             logger.warning("No resultSets in PBP data", game_id=game_id)
             return events
+
+        # Preprocess the entire PBP response to handle mixed data types
+        pbp_data = preprocess_nba_stats_data(pbp_data)
         
         # Find PlayByPlay result set
         pbp_set = None
@@ -105,6 +115,9 @@ def extract_pbp_from_response(
             try:
                 # Convert row to dictionary
                 event_dict = dict(zip(headers, row))
+                
+                # Additional preprocessing for the individual event data
+                event_dict = preprocess_nba_stats_data(event_dict)
                 
                 # Create PbpEventRow using the from_nba_stats class method
                 event_row = PbpEventRow.from_nba_stats(game_id, event_dict, source_url)
@@ -145,6 +158,9 @@ def extract_boxscore_lineups(
         if 'resultSets' not in boxscore_data:
             logger.warning("No resultSets in boxscore data", game_id=game_id)
             return lineups
+
+        # Preprocess the entire boxscore response to handle mixed data types
+        boxscore_data = preprocess_nba_stats_data(boxscore_data)
         
         # Look for PlayerStats result sets (usually separate for each team)
         for result_set in boxscore_data['resultSets']:
@@ -161,11 +177,15 @@ def extract_boxscore_lineups(
                 continue
             
             first_row_dict = dict(zip(headers, rows[0]))
+            first_row_dict = preprocess_nba_stats_data(first_row_dict)
             team_tricode = first_row_dict.get('TEAM_ABBREVIATION', '')
             
             for row in rows:
                 try:
                     player_dict = dict(zip(headers, row))
+                    
+                    # Additional preprocessing for the individual player data
+                    player_dict = preprocess_nba_stats_data(player_dict)
                     
                     # Check if player was a starter
                     start_position = player_dict.get('START_POSITION')

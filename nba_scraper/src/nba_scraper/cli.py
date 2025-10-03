@@ -11,7 +11,8 @@ from rich.table import Table
 
 from .config import get_settings, validate_configuration
 from .db import check_connection, create_tables, get_connection
-from .logging import configure_logging, get_logger, metrics, health_checker
+from .nba_logging import configure_logging, get_logger, metrics, health_checker
+from .nba_logging import alert_manager
 from .monitoring import get_health_status, get_metrics_summary, prometheus_exporter
 from .pipelines.backfill import BackfillPipeline
 from .pipelines.daily import DailyPipeline
