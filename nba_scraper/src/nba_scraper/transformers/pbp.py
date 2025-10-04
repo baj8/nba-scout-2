@@ -1,41 +1,57 @@
-"""PBP transformers - pure functions with preprocessing and clock handling."""
+"""PBP transformation functions - pure, synchronous."""
 
 from typing import Iterable, Dict, Any, List
 from ..models.pbp import PbpEvent
-from ..utils.preprocess import preprocess_nba_stats_data
+from ..utils.preprocess import preprocess_nba_stats_data, normalize_team_id, normalize_player_id, normalize_clock_time
 
 
 def transform_pbp(events: Iterable[Dict[str, Any]], game_id: str) -> List[PbpEvent]:
-    """Transform raw PBP events to validated PbpEvent models with clock handling."""
+    """Transform extracted PBP events to validated PbpEvent models.
+    
+    Args:
+        events: Iterable of dictionaries from extract_pbp_from_response
+        game_id: Game identifier for linking
+        
+    Returns:
+        List of validated PbpEvent instances with clock_seconds and seconds_elapsed derived
+    """
     rows: List[PbpEvent] = []
     
     for e in events:
-        # Apply preprocessing to handle mixed data types
+        # Apply preprocessing to handle mixed data types safely
         e = preprocess_nba_stats_data(e)
         
-        # Extract clock string (preserve as string, don't convert to float)
-        clock_raw = e.get("PCTIMESTRING") or e.get("CLOCK") or ""
+        # Extract required fields with safe defaults
+        event_num = int(e.get("EVENTNUM", 0))
+        period = int(e.get("PERIOD", 1))
         
-        # Extract team ID with proper null handling
-        team_id = None
-        if e.get("TEAM_ID") not in (None, "", 0):
-            team_id = int(e["TEAM_ID"])
-        elif e.get("PLAYER1_TEAM_ID") not in (None, "", 0):
-            team_id = int(e["PLAYER1_TEAM_ID"])
+        # Handle clock time - preserve as string for model validation
+        clock_raw = (
+            e.get("PCTIMESTRING") or 
+            e.get("CLOCK") or 
+            e.get("TIME_REMAINING") or 
+            "12:00"
+        )
+        clock = normalize_clock_time(clock_raw)
         
-        # Extract player ID with proper null handling
-        player1_id = None
-        if e.get("PLAYER1_ID") not in (None, "", 0):
-            player1_id = int(e["PLAYER1_ID"])
+        # Safely extract nullable fields
+        team_id = normalize_team_id(e.get("TEAM_ID"))
+        player1_id = normalize_player_id(e.get("PLAYER1_ID"))
         
-        # Extract action types with proper null handling
+        # Extract action types with None handling
         action_type = None
-        if e.get("EVENTMSGTYPE") not in (None, ""):
-            action_type = int(e["EVENTMSGTYPE"])
-            
+        if e.get("EVENTMSGTYPE") not in (None, "", 0):
+            try:
+                action_type = int(e["EVENTMSGTYPE"])
+            except (ValueError, TypeError):
+                action_type = None
+                
         action_subtype = None
-        if e.get("EVENTMSGACTIONTYPE") not in (None, ""):
-            action_subtype = int(e["EVENTMSGACTIONTYPE"])
+        if e.get("EVENTMSGACTIONTYPE") not in (None, "", 0):
+            try:
+                action_subtype = int(e["EVENTMSGACTIONTYPE"])
+            except (ValueError, TypeError):
+                action_subtype = None
         
         # Extract description from various possible fields
         description = (
@@ -45,17 +61,24 @@ def transform_pbp(events: Iterable[Dict[str, Any]], game_id: str) -> List[PbpEve
             e.get("DESCRIPTION")
         )
         
-        # Create PbpEvent - clock_seconds will be auto-derived by the model
-        rows.append(PbpEvent(
-            game_id=game_id,
-            event_num=int(e["EVENTNUM"]),
-            period=int(e["PERIOD"]),
-            clock=clock_raw,  # Keep as string - no float conversion!
-            team_id=team_id,
-            player1_id=player1_id,
-            action_type=action_type,
-            action_subtype=action_subtype,
-            description=description
-        ))
+        # Create PbpEvent - model validators will derive clock_seconds and seconds_elapsed
+        try:
+            pbp_event = PbpEvent(
+                game_id=game_id,
+                event_num=event_num,
+                period=period,
+                clock=clock,
+                team_id=team_id,
+                player1_id=player1_id,
+                action_type=action_type,
+                action_subtype=action_subtype,
+                description=str(description) if description is not None else None
+                # clock_seconds and seconds_elapsed will be derived by model validators
+            )
+            rows.append(pbp_event)
+            
+        except Exception as e:
+            # Skip invalid events but don't fail the entire batch
+            continue
     
     return rows

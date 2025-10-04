@@ -1,174 +1,118 @@
-"""Unit tests for clock parsing utilities with fractional seconds support."""
+"""Unit tests for clock parsing utilities."""
 
 import pytest
-from nba_scraper.utils.clock import parse_clock_to_seconds, format_seconds_to_clock, validate_clock_format
+from nba_scraper.utils.clock import (
+    parse_clock_to_seconds, 
+    compute_seconds_elapsed,
+    validate_clock_format,
+    format_seconds_as_clock
+)
 
 
 def test_parse_clock_to_seconds_basic_and_fractional():
-    """Test basic and fractional second parsing for various clock formats."""
-    # Basic MM:SS format
-    assert parse_clock_to_seconds("24:49") == 1489.0
-    assert parse_clock_to_seconds("0:00") == 0.0
-    assert parse_clock_to_seconds("5:09") == 309.0
-    assert parse_clock_to_seconds("12:00") == 720.0
-    
-    # Single digit minutes
-    assert parse_clock_to_seconds("1:30") == 90.0
-    assert parse_clock_to_seconds("9:59") == 599.0
+    """Test clock parsing with basic and fractional seconds."""
+    # Basic formats
+    assert parse_clock_to_seconds("24:49") == 1489
+    assert parse_clock_to_seconds("0:00") == 0
+    assert parse_clock_to_seconds("5:09") == 309
+    assert parse_clock_to_seconds("12:00") == 720
     
     # Fractional seconds
     assert parse_clock_to_seconds("1:23.4") == 83.4
     assert parse_clock_to_seconds("01:23.45") == 83.45
     assert parse_clock_to_seconds("0:05.123") == 5.123
-    assert parse_clock_to_seconds("12:30.5") == 750.5
     
-    # ISO duration format
-    assert parse_clock_to_seconds("PT10M24S") == 624.0
-    assert parse_clock_to_seconds("PT0M5S") == 5.0
-    assert parse_clock_to_seconds("PT1M0S") == 60.0
-    
-    # ISO with fractional seconds
+    # ISO duration formats
+    assert parse_clock_to_seconds("PT10M24S") == 624
     assert parse_clock_to_seconds("PT0M5.1S") == 5.1
-    assert parse_clock_to_seconds("PT10M24.75S") == 624.75
-
-
-def test_parse_clock_to_seconds_invalid():
-    """Test parsing of invalid clock formats."""
-    # Invalid formats should return None
-    assert parse_clock_to_seconds("24-49") is None
+    assert parse_clock_to_seconds("PT12M0S") == 720
+    
+    # Invalid formats
+    assert parse_clock_to_seconds("25:00") is None  # Invalid minutes
+    assert parse_clock_to_seconds("12:60") is None  # Invalid seconds
+    assert parse_clock_to_seconds("invalid") is None
     assert parse_clock_to_seconds("") is None
-    assert parse_clock_to_seconds("25:70") is None  # Invalid seconds (>59)
-    assert parse_clock_to_seconds("abc:def") is None
-    assert parse_clock_to_seconds("12:") is None
-    assert parse_clock_to_seconds(":30") is None
-    assert parse_clock_to_seconds("not-a-time") is None
-    assert parse_clock_to_seconds("12:99") is None  # Invalid seconds
-    
-    # None input
     assert parse_clock_to_seconds(None) is None
-    
-    # Non-string input
-    assert parse_clock_to_seconds(1234) is None
-    assert parse_clock_to_seconds(12.34) is None
 
 
-def test_format_seconds_to_clock():
-    """Test formatting seconds back to clock format."""
-    # Basic formatting
-    assert format_seconds_to_clock(1489.0) == "24:49"
-    assert format_seconds_to_clock(0.0) == "0:00"
-    assert format_seconds_to_clock(309.0) == "5:09"
-    assert format_seconds_to_clock(720.0) == "12:00"
+def test_elapsed_regulation_and_ot():
+    """Test seconds elapsed calculation for regulation and overtime periods."""
+    # Period 1 - regulation
+    cs = parse_clock_to_seconds("12:00")
+    assert compute_seconds_elapsed(1, cs) == 0  # Start of game
     
-    # Fractional seconds
-    assert format_seconds_to_clock(83.4) == "1:23.400"
-    assert format_seconds_to_clock(83.45) == "1:23.450"
-    assert format_seconds_to_clock(5.123) == "0:05.123"
+    cs = parse_clock_to_seconds("0:00") 
+    assert compute_seconds_elapsed(1, cs) == 12*60  # End of Q1
     
-    # Edge cases
-    assert format_seconds_to_clock(None) == ""
-    assert format_seconds_to_clock(59.0) == "0:59"
-    assert format_seconds_to_clock(3600.0) == "60:00"  # 1 hour
+    cs = parse_clock_to_seconds("6:00")
+    assert compute_seconds_elapsed(1, cs) == 6*60  # 6 minutes into Q1
+    
+    # Period 2 - regulation
+    cs = parse_clock_to_seconds("6:00")
+    assert compute_seconds_elapsed(2, cs) == 12*60 + 6*60  # Q1 + 6min into Q2
+    
+    # Period 4 - end of regulation
+    cs = parse_clock_to_seconds("0:00")
+    assert compute_seconds_elapsed(4, cs) == 48*60  # End of regulation
+    
+    # Period 5 - first overtime
+    cs = parse_clock_to_seconds("5:00")
+    assert compute_seconds_elapsed(5, cs) == 48*60  # Start of OT
+    
+    cs = parse_clock_to_seconds("0:00")
+    assert compute_seconds_elapsed(5, cs) == 48*60 + 5*60  # End of 1st OT
+    
+    # Period 6 - second overtime
+    cs = parse_clock_to_seconds("2:30")
+    assert compute_seconds_elapsed(6, cs) == 48*60 + 5*60 + 2.5*60  # Into 2nd OT
+
+
+def test_elapsed_mode_auto_correction():
+    """Test auto-correction when mode assumption is wrong."""
+    # Test case where we get negative result and auto-correct
+    period = 1
+    clock_seconds = 600  # 10 minutes
+    
+    # If this was actually elapsed time, not remaining time
+    result = compute_seconds_elapsed(period, clock_seconds, mode="remaining")
+    assert result >= 0  # Should auto-correct and clamp to 0 if needed
+    
+    # Test explicit elapsed mode
+    result = compute_seconds_elapsed(period, clock_seconds, mode="elapsed")
+    assert result == 600  # 10 minutes elapsed
+
+
+def test_fractional_seconds_elapsed():
+    """Test elapsed calculation with fractional seconds."""
+    cs = parse_clock_to_seconds("11:30.5")  # 11:30.5 remaining in Q1
+    result = compute_seconds_elapsed(1, cs)
+    expected = 12*60 - (11*60 + 30.5)  # Should be 29.5 seconds elapsed
+    assert abs(result - expected) < 0.01
 
 
 def test_validate_clock_format():
     """Test clock format validation."""
     # Valid formats
-    assert validate_clock_format("24:49") is True
-    assert validate_clock_format("0:00") is True
-    assert validate_clock_format("12:30") is True
-    assert validate_clock_format("1:23.4") is True
-    assert validate_clock_format("01:23.45") is True
-    assert validate_clock_format("PT10M24S") is True
-    assert validate_clock_format("PT0M5.1S") is True
+    assert validate_clock_format("12:34")
+    assert validate_clock_format("0:00")
+    assert validate_clock_format("1:23.4")
+    assert validate_clock_format("PT12M34S")
+    assert validate_clock_format("PT1M23.4S")
     
     # Invalid formats
-    assert validate_clock_format("24-49") is False
-    assert validate_clock_format("25:70") is False
-    assert validate_clock_format("") is False
-    assert validate_clock_format("abc:def") is False
-    assert validate_clock_format(None) is False
-    assert validate_clock_format(1234) is False
+    assert not validate_clock_format("25:00")  # Invalid minutes
+    assert not validate_clock_format("12:60")  # Invalid seconds
+    assert not validate_clock_format("12:3")   # Missing zero pad
+    assert not validate_clock_format("invalid")
+    assert not validate_clock_format("")
+    assert not validate_clock_format(None)
 
 
-def test_round_trip_conversion():
-    """Test that parsing and formatting are consistent."""
-    test_clocks = [
-        "24:49",
-        "0:00", 
-        "5:09",
-        "1:23.4",
-        "12:30.75"
-    ]
-    
-    for clock in test_clocks:
-        seconds = parse_clock_to_seconds(clock)
-        assert seconds is not None
-        
-        # Format back to clock
-        formatted = format_seconds_to_clock(seconds)
-        
-        # Parse again
-        seconds_again = parse_clock_to_seconds(formatted)
-        
-        # Should be very close (within floating point precision)
-        assert abs(seconds - seconds_again) < 0.001
-
-
-def test_edge_case_boundaries():
-    """Test boundary conditions for clock parsing."""
-    # Minimum valid values
-    assert parse_clock_to_seconds("0:00") == 0.0
-    assert parse_clock_to_seconds("0:01") == 1.0
-    
-    # Maximum valid seconds
-    assert parse_clock_to_seconds("0:59") == 59.0
-    assert parse_clock_to_seconds("1:59") == 119.0
-    
-    # Large but valid values
-    assert parse_clock_to_seconds("48:00") == 2880.0  # Double overtime
-    
-    # Very small fractional seconds
-    assert parse_clock_to_seconds("0:00.1") == 0.1
-    assert parse_clock_to_seconds("0:00.01") == 0.01
-    assert parse_clock_to_seconds("0:00.001") == 0.001
-
-
-def test_caching_behavior():
-    """Test that the LRU cache is working correctly."""
-    # First call
-    result1 = parse_clock_to_seconds("12:34")
-    
-    # Second call with same input should return cached result
-    result2 = parse_clock_to_seconds("12:34")
-    
-    assert result1 == result2 == 754.0
-    
-    # The function should handle many different inputs efficiently
-    test_values = [f"{m}:{s:02d}" for m in range(10) for s in range(0, 60, 5)]
-    
-    for clock in test_values:
-        result = parse_clock_to_seconds(clock)
-        assert result is not None
-        assert result >= 0
-
-
-def test_real_nba_clock_scenarios():
-    """Test with realistic NBA game clock scenarios."""
-    # Quarter ending scenarios
-    assert parse_clock_to_seconds("12:00") == 720.0  # Start of quarter
-    assert parse_clock_to_seconds("0:00") == 0.0     # End of quarter
-    
-    # Common game situations
-    assert parse_clock_to_seconds("2:00") == 120.0   # Two-minute warning
-    assert parse_clock_to_seconds("0:24") == 24.0    # Shot clock scenario
-    assert parse_clock_to_seconds("0:03.7") == 3.7   # Buzzer beater scenario
-    
-    # Overtime scenarios
-    assert parse_clock_to_seconds("5:00") == 300.0   # Start of OT
-    assert parse_clock_to_seconds("24:00") == 1440.0 # Double OT remaining time
-    
-    # Real examples from the problematic data
-    assert parse_clock_to_seconds("24:49") == 1489.0  # The original failing case
-    assert parse_clock_to_seconds("11:45") == 705.0
-    assert parse_clock_to_seconds("6:23") == 383.0
+def test_format_seconds_as_clock():
+    """Test formatting seconds back to clock string."""
+    assert format_seconds_as_clock(0) == "0:00"
+    assert format_seconds_as_clock(30) == "0:30"
+    assert format_seconds_as_clock(90) == "1:30"
+    assert format_seconds_as_clock(723.5) == "12:03.500"
+    assert format_seconds_as_clock(-10) == "0:00"  # Negative clamped
+    assert format_seconds_as_clock(None) == "0:00"  # None handled

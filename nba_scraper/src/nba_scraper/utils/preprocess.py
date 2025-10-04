@@ -1,26 +1,31 @@
-"""Data type preprocessing utilities for NBA stats data."""
+"""Data preprocessing utilities to prevent dtype coercion errors."""
 
 import re
 from typing import Any
 
+# Regex patterns for type detection
 _NUMERIC_RE = re.compile(r"^[+-]?(?:\d+\.?\d*|\.\d+)$")
 _CLOCK_LIKE = re.compile(r"^\d{1,2}:[0-5]\d(?:\.\d{1,3})?$")
 _ISO_DURATION_RE = re.compile(r"^PT\d+M\d+(?:\.\d{1,3})?S$")
+
 
 def _looks_like_clock(s: str) -> bool:
     """Check if string looks like a clock time or duration."""
     return bool(_CLOCK_LIKE.match(s)) or bool(_ISO_DURATION_RE.match(s))
 
+
 def _coerce_scalar(v: Any) -> Any:
-    """Coerce scalar values, preserving clock formats."""
+    """Safely coerce scalar values without breaking clock strings."""
     if v is None or isinstance(v, bool):
         return v
     if isinstance(v, (int, float)):
         return v
     if isinstance(v, str):
         s = v.strip()
+        # CRITICAL: Don't coerce clock-like strings to floats
         if _looks_like_clock(s):
             return s
+        # Only coerce pure numeric strings
         if _NUMERIC_RE.match(s):
             try:
                 f = float(s)
@@ -30,21 +35,15 @@ def _coerce_scalar(v: Any) -> Any:
         return s
     return v
 
+
 def preprocess_nba_stats_data(obj: Any) -> Any:
-    """
-    Recursively preprocess NBA stats data to coerce types while preserving clock strings.
-    
-    Args:
-        obj: Raw data from NBA API
-        
-    Returns:
-        Preprocessed data with proper types but clock strings preserved
-    """
+    """Recursively preprocess NBA Stats API data to handle mixed types safely."""
     if isinstance(obj, list):
         return [preprocess_nba_stats_data(x) for x in obj]
     if isinstance(obj, dict):
         return {k: preprocess_nba_stats_data(v) for k, v in obj.items()}
     return _coerce_scalar(obj)
+
 
 def normalize_team_id(team_id: Any) -> int | None:
     """Normalize team ID to integer, handling various input formats."""

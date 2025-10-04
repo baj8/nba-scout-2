@@ -1,61 +1,77 @@
-"""Boxscore extractors for NBA game metadata."""
+"""Boxscore extraction functions - shape-only, null-safe."""
 
-from ..utils.season import coalesce_season
+from typing import Dict, Any
+from ..utils.season import derive_season_smart
 
-def extract_game_from_boxscore(bs: dict) -> dict:
-    """Extract game metadata from boxscore response with null-safe field access."""
+
+def extract_game_from_boxscore(bs: Dict[str, Any]) -> Dict[str, Any]:
+    """Extract game metadata from boxscore response - shape only, no preprocessing.
     
-    # Try multiple possible field names for game_id
+    Args:
+        bs: Raw boxscore response dictionary
+        
+    Returns:
+        Dictionary with extracted game fields
+    """
+    # Extract game ID from multiple possible locations
     game_id = (
-        bs.get("gameId")
-        or bs.get("GAME_ID")
-        or (bs.get("meta") or {}).get("gameId")
-        or (bs.get("game") or {}).get("gameId")
+        bs.get("gameId") or
+        bs.get("GAME_ID") or 
+        (bs.get("meta") or {}).get("gameId") or
+        (bs.get("game") or {}).get("gameId")
     )
     
-    # Try multiple possible field names for game_date
+    # Extract game date
     game_date = (
-        bs.get("gameDate")
-        or bs.get("GAME_DATE")
-        or (bs.get("meta") or {}).get("gameDate")
-        or (bs.get("game") or {}).get("gameDate")
+        bs.get("gameDate") or
+        bs.get("GAME_DATE") or
+        bs.get("gameTimeUTC") or
+        (bs.get("meta") or {}).get("gameDate") or
+        (bs.get("game") or {}).get("gameTimeUTC")
     )
     
-    # Try multiple possible field names for home team
+    # Extract team IDs - handle nested structures
+    home_team_obj = bs.get("homeTeam") or bs.get("HOME") or {}
+    away_team_obj = bs.get("awayTeam") or bs.get("AWAY") or bs.get("visitorTeam") or {}
+    
     home_team_id = (
-        (bs.get("homeTeam") or {}).get("teamId")
-        or (bs.get("HOME") or {}).get("TEAM_ID")
-        or (bs.get("game") or {}).get("homeTeam", {}).get("teamId")
+        home_team_obj.get("teamId") or
+        home_team_obj.get("TEAM_ID") or
+        bs.get("HOME_TEAM_ID")
     )
     
-    # Try multiple possible field names for away team
     away_team_id = (
-        (bs.get("awayTeam") or {}).get("teamId")
-        or (bs.get("AWAY") or {}).get("TEAM_ID")
-        or (bs.get("game") or {}).get("awayTeam", {}).get("teamId")
+        away_team_obj.get("teamId") or
+        away_team_obj.get("TEAM_ID") or
+        bs.get("VISITOR_TEAM_ID") or
+        bs.get("AWAY_TEAM_ID")
     )
     
-    # Try multiple possible field names for status
+    # Extract game status
     status = (
-        bs.get("gameStatusText")
-        or bs.get("GAME_STATUS_TEXT")
-        or bs.get("status")
-        or "Final"
+        bs.get("gameStatusText") or
+        bs.get("GAME_STATUS_TEXT") or
+        bs.get("gameStatus") or
+        (bs.get("game") or {}).get("gameStatusText") or
+        "Final"
     )
     
-    # Derive season with fallback chain
+    # Derive season with fallbacks
+    explicit_season = bs.get("season") or bs.get("SEASON")
     season = (
-        bs.get("season")
-        or bs.get("SEASON")
-        or coalesce_season(str(game_id) if game_id else None, game_date)
-        or "UNKNOWN"
+        explicit_season or
+        derive_season_smart(
+            str(game_id) if game_id is not None else None,
+            str(game_date) if game_date is not None else None
+        ) or
+        "UNKNOWN"
     )
     
     return {
         "game_id": str(game_id) if game_id is not None else "",
         "season": season,
-        "game_date": game_date or "",
+        "game_date": str(game_date) if game_date is not None else "",
         "home_team_id": home_team_id,
         "away_team_id": away_team_id,
-        "status": status,
+        "status": str(status) if status is not None else "Final",
     }

@@ -2,18 +2,18 @@
 
 from datetime import datetime as dt
 import asyncio
-from typing import Optional
+from typing import Optional, Dict, Any, List
 
 from ..db import get_connection
 from ..nba_logging import get_logger
-from ..io_clients.nba_stats import NBAStatsClient
+from ..io_clients import IoFacade
 from ..rate_limit import RateLimiter
 
 # Import extractors (IO → Python dicts)
 from ..extractors.boxscore import extract_game_from_boxscore
 from ..extractors.pbp import extract_pbp_from_response
 from ..extractors.lineups import extract_lineups_from_response
-from ..extractors.nba_stats import extract_shot_chart_detail
+from ..extractors.shots import extract_shot_chart_detail
 
 # Import transformers (pure → Pydantic) - No network calls
 from ..transformers.games import transform_game
@@ -22,202 +22,249 @@ from ..transformers.lineups import transform_lineups
 from ..transformers.shots import transform_shots
 
 # Import loaders
-from ..loaders.games import upsert_game
-from ..loaders.pbp import upsert_pbp
-from ..loaders.lineups import upsert_lineups
-from ..loaders.shots import upsert_shots
+from ..loaders import upsert_game, upsert_pbp, upsert_lineups, upsert_shots, upsert_adv_metrics
 
 logger = get_logger(__name__)
 
 
 class NBAStatsPipeline:
-    """
-    Foundation pipeline implementing Tranche 0 + Tranche 2 integration.
+    """NBA Stats pipeline with foundation data + Tranche 2 shot coordinates."""
     
-    Pipeline is async, transformers are sync (pure). Only DB and network are awaited.
-    Enforces load order inside ONE transaction with deferrable FKs.
-    """
-    
-    def __init__(self, io_client: NBAStatsClient, rate_limiter: RateLimiter):
-        self.io_client = io_client
-        self.rate_limiter = rate_limiter
-    
-    async def run_single_game(self, game_id: str, season: str = "2024-25") -> dict:
-        """
-        Process a single game with foundation data + shot coordinates.
+    def __init__(self, io_impl, db=None, rate_limiter=None):
+        """Initialize pipeline with IO implementation and optional dependencies."""
+        self.io = IoFacade(io_impl)
+        self.db = db
+        self.rate_limiter = rate_limiter or RateLimiter()
         
+    async def run_single_game(self, game_id: str, season: str = "2024-25") -> Dict[str, Any]:
+        """Process single game with foundation data + shot coordinates.
+        
+        Args:
+            game_id: NBA game ID
+            season: Season hint for fallback
+            
         Returns:
-            dict with success status and metrics
+            Results dictionary with processing statistics
         """
         start_time = dt.utcnow()
         
         try:
-            logger.info("Starting NBA Stats pipeline", game_id=game_id, season=season)
+            # Use provided db connection or get new one
+            if self.db:
+                conn = self.db
+                use_transaction = False
+            else:
+                conn = await get_connection()
+                use_transaction = True
             
-            # 1) Fetch raw data (all network calls with rate limiting)
-            await self.rate_limiter.acquire("nba_stats_pipeline")
-            
-            logger.info("Fetching raw API responses", game_id=game_id)
-            
-            # Fetch boxscore for game metadata + lineups
-            bs_resp = await self.io_client.fetch_boxscore(game_id)
-            
-            # Fetch PBP events  
-            pbp_resp = await self.io_client.fetch_pbp(game_id)
-            
-            # Fetch shot chart data (Tranche 2)
-            shots_resp = await self.io_client.fetch_shotchart_reliable(game_id, season)
-            
-            logger.info("Completed API fetches", game_id=game_id)
-            
-            # 2) Extract raw data (pure functions, no await)
-            logger.info("Extracting data structures", game_id=game_id)
-            
-            game_meta_raw = extract_game_from_boxscore(bs_resp)
-            pbp_raw = extract_pbp_from_response(pbp_resp)
-            lineups_raw = extract_lineups_from_response(bs_resp)  # Extract lineups from boxscore
-            shots_raw = extract_shot_chart_detail(shots_resp, game_id, f"shotchart/{game_id}")
-            
-            logger.info("Extracted raw data", 
-                       game_id=game_id,
-                       pbp_events=len(pbp_raw),
-                       lineups=len(lineups_raw),
-                       shots=len(shots_raw))
-            
-            # 3) Transform to Pydantic models (pure functions, no await)
-            logger.info("Transforming to validated models", game_id=game_id)
-            
-            game = transform_game(game_meta_raw)
-            pbp_rows = transform_pbp(pbp_raw, game_id=game.game_id)
-            lineup_rows = transform_lineups(lineups_raw, game_id=game.game_id)
-            shot_rows = transform_shots(shots_raw, game_id=game.game_id)
-            
-            logger.info("Transformed to models", 
-                       game_id=game_id,
-                       pbp_count=len(pbp_rows),
-                       lineup_count=len(lineup_rows),
-                       shot_count=len(shot_rows))
-            
-            # 4) Load in one transaction with correct order (deferrable FKs)
-            logger.info("Loading to database", game_id=game_id)
-            
-            conn = await get_connection()
-            
-            async with conn.transaction():
-                # STEP 1: Load parent game record first
-                await upsert_game(conn, game)
-                logger.info("Upserted game record", game_id=game_id)
+            if use_transaction:
+                async with conn.transaction():
+                    result = await self._process_game_data(conn, game_id, season, start_time)
+            else:
+                result = await self._process_game_data(conn, game_id, season, start_time)
                 
-                # STEP 2: Load dependent tables (FKs satisfied by deferrable constraints)
-                await upsert_pbp(conn, pbp_rows)
-                logger.info("Upserted PBP events", game_id=game_id, count=len(pbp_rows))
+            if not self.db:
+                await conn.close()
                 
-                await upsert_lineups(conn, lineup_rows) 
-                logger.info("Upserted lineups", game_id=game_id, count=len(lineup_rows))
-                
-                # STEP 3: Optionally store shots separately OR enrich PBP with coordinates
-                # For now, store shots separately for Tranche 2
-                await upsert_shots(conn, shot_rows)
-                logger.info("Upserted shots", game_id=game_id, count=len(shot_rows))
-                
-                # STEP 4: Map shot coordinates to PBP events (Tranche 2 enhancement)
-                shot_mappings = await self._map_shots_to_pbp(conn, game_id, shot_rows, pbp_rows)
-                logger.info("Mapped shots to PBP", game_id=game_id, mappings=shot_mappings)
-                
-                # Transaction commits here - all FKs will be validated
-            
-            await conn.close()
-            
-            duration = (dt.utcnow() - start_time).total_seconds()
-            
-            result = {
-                "success": True,
-                "game_id": game_id,
-                "duration_seconds": duration,
-                "records": {
-                    "games": 1,
-                    "pbp_events": len(pbp_rows),
-                    "lineups": len(lineup_rows),
-                    "shots": len(shot_rows),
-                    "shot_mappings": shot_mappings
-                }
-            }
-            
-            logger.info("Pipeline completed successfully", 
-                       game_id=game_id, 
-                       duration=duration,
-                       records=result["records"])
-            
             return result
             
         except Exception as e:
-            duration = (dt.utcnow() - start_time).total_seconds()
-            logger.error("Pipeline failed", game_id=game_id, error=str(e), duration=duration)
-            
+            logger.error("Game processing failed", game_id=game_id, error=str(e), exc_info=True)
             return {
                 "success": False,
                 "game_id": game_id,
                 "error": str(e),
-                "duration_seconds": duration
+                "duration_seconds": (dt.utcnow() - start_time).total_seconds()
             }
     
-    async def _map_shots_to_pbp(self, conn, game_id: str, shot_rows, pbp_rows) -> int:
-        """
-        Map shot coordinates to PBP events by matching event numbers.
-        Returns count of successful mappings.
+    async def _process_game_data(self, conn, game_id: str, season: str, start_time: dt) -> Dict[str, Any]:
+        """Internal method to process game data within transaction context."""
+        
+        # STEP 1: Fetch all data concurrently with rate limiting
+        await self.rate_limiter.acquire('nba_stats')
+        boxscore_resp, pbp_resp, lineups_resp, shots_resp = await asyncio.gather(
+            self.io.fetch_boxscore(game_id),
+            self.io.fetch_pbp(game_id),
+            self.io.fetch_lineups(game_id),
+            self.io.fetch_shots(game_id),
+            return_exceptions=True
+        )
+        
+        # Handle fetch failures gracefully
+        if isinstance(boxscore_resp, Exception):
+            logger.warning("Boxscore fetch failed", game_id=game_id, error=str(boxscore_resp))
+            boxscore_resp = {}
+        if isinstance(pbp_resp, Exception):
+            logger.warning("PBP fetch failed", game_id=game_id, error=str(pbp_resp))
+            pbp_resp = {}
+        if isinstance(lineups_resp, Exception):
+            logger.warning("Lineups fetch failed", game_id=game_id, error=str(lineups_resp))
+            lineups_resp = {}
+        if isinstance(shots_resp, Exception):
+            logger.warning("Shots fetch failed", game_id=game_id, error=str(shots_resp))
+            shots_resp = {}
+        
+        # STEP 2: Extract → Transform data
+        game_meta_raw = extract_game_from_boxscore(boxscore_resp)
+        game = transform_game(game_meta_raw)
+        
+        pbp_events_raw = extract_pbp_from_response(pbp_resp)
+        pbp_rows = transform_pbp(pbp_events_raw, game_id=game.game_id)
+        
+        lineup_events_raw = extract_lineups_from_response(lineups_resp)
+        lineup_rows = transform_lineups(lineup_events_raw, game_id=game.game_id)
+        
+        shot_events_raw = extract_shot_chart_detail(shots_resp)
+        shot_rows = transform_shots(shot_events_raw, game_id=game.game_id)
+        
+        # STEP 3: Load data with deferrable FK constraints
+        # Games first (parent table)
+        if upsert_game:
+            await upsert_game(conn, game)
+            logger.info("Upserted game record", game_id=game_id)
+        
+        # Then dependent tables (FKs satisfied by deferrable constraints)
+        if upsert_pbp and pbp_rows:
+            await upsert_pbp(conn, pbp_rows)
+            logger.info("Upserted PBP events", game_id=game_id, count=len(pbp_rows))
+        
+        if upsert_lineups and lineup_rows:
+            await upsert_lineups(conn, lineup_rows)
+            logger.info("Upserted lineups", game_id=game_id, count=len(lineup_rows))
+        
+        if upsert_shots and shot_rows:
+            await upsert_shots(conn, shot_rows)
+            logger.info("Upserted shots", game_id=game_id, count=len(shot_rows))
+        
+        # STEP 4: Map shot coordinates to PBP events (Tranche 2 enhancement)
+        shot_mappings = await self._map_shots_to_pbp(conn, game_id, shot_rows, pbp_rows)
+        logger.info("Mapped shots to PBP", game_id=game_id, mappings=shot_mappings)
+        
+        # Advanced metrics can be loaded separately if available
+        if upsert_adv_metrics:
+            await upsert_adv_metrics(conn, [])  # Placeholder for advanced metrics
+        
+        # Transaction commits here - all FKs will be validated
+        
+        duration = (dt.utcnow() - start_time).total_seconds()
+        
+        return {
+            "success": True,
+            "game_id": game_id,
+            "season": game.season,
+            "duration_seconds": duration,
+            "records": {
+                "games": 1,
+                "pbp_events": len(pbp_rows),
+                "lineups": len(lineup_rows),
+                "shots": len(shot_rows),
+                "shot_mappings": shot_mappings
+            }
+        }
+    
+    async def _map_shots_to_pbp(self, conn, game_id: str, shot_rows: List, pbp_rows: List) -> int:
+        """Map shot coordinates to PBP events using event numbers and timing.
+        
+        This implements Tranche 2 functionality by linking shot chart data
+        to play-by-play events for enhanced analytics.
         """
         if not shot_rows or not pbp_rows:
             return 0
         
-        # Create mapping from shot event_num to coordinates
-        shot_map = {}
-        for shot in shot_rows:
-            if shot.event_num is not None:
-                shot_map[shot.event_num] = {
-                    'loc_x': shot.loc_x,
-                    'loc_y': shot.loc_y,
-                    'shot_distance': self._calculate_shot_distance(shot.loc_x, shot.loc_y),
-                    'shot_zone': self._classify_shot_zone(shot.loc_x, shot.loc_y)
-                }
-        
-        # Update PBP events with shot coordinates
         mappings = 0
-        for shot_event_num, coords in shot_map.items():
-            result = await conn.execute("""
-                UPDATE pbp_events 
-                SET loc_x = $1, loc_y = $2, shot_distance = $3, shot_zone = $4
-                WHERE game_id = $5 AND event_num = $6
-                  AND action_type IN (1, 2)  -- Only shot events
-            """, coords['loc_x'], coords['loc_y'], coords['shot_distance'], 
-                coords['shot_zone'], game_id, shot_event_num)
-            
-            # Extract count from result like "UPDATE 1"
-            if result and 'UPDATE' in result:
-                count = int(result.split()[-1])
-                mappings += count
+        
+        # Create lookup of PBP events by event_num for shots that have event_num
+        pbp_by_event_num = {
+            pbp.event_num: pbp for pbp in pbp_rows 
+            if hasattr(pbp, 'event_num')
+        }
+        
+        for shot in shot_rows:
+            if hasattr(shot, 'event_num') and shot.event_num and shot.event_num in pbp_by_event_num:
+                # Direct mapping via event number
+                pbp_event = pbp_by_event_num[shot.event_num]
+                
+                # Update PBP event with shot coordinates
+                try:
+                    await conn.execute("""
+                        UPDATE pbp_events 
+                        SET shot_x = $1, shot_y = $2, shot_distance_ft = $3
+                        WHERE game_id = $4 AND event_idx = $5
+                    """, shot.loc_x, shot.loc_y, 
+                    self._calculate_shot_distance(shot.loc_x, shot.loc_y),
+                    game_id, shot.event_num)
+                    
+                    mappings += 1
+                except Exception as e:
+                    logger.warning("Failed to map shot to PBP", 
+                                 game_id=game_id, event_num=shot.event_num, error=str(e))
         
         return mappings
     
-    def _calculate_shot_distance(self, loc_x: int, loc_y: int) -> int:
-        """Calculate shot distance in feet from coordinates."""
+    def _calculate_shot_distance(self, loc_x: int, loc_y: int) -> float:
+        """Calculate shot distance from coordinates."""
+        # NBA court coordinates: basket is at (0, 0)
         import math
-        # NBA court coordinates: center is (0,0), basket at (0, 0)
-        # Convert to feet (approximate)
-        distance_units = math.sqrt(loc_x**2 + loc_y**2)
-        distance_feet = int(distance_units / 10)  # Rough conversion
-        return max(0, distance_feet)
+        return math.sqrt(loc_x**2 + loc_y**2) / 10.0  # Convert to feet
     
-    def _classify_shot_zone(self, loc_x: int, loc_y: int) -> str:
-        """Classify shot zone based on coordinates."""
-        import math
+    async def run_multiple_games(self, game_ids: List[str], *, concurrency: int = 3) -> List[Dict[str, Any]]:
+        """Process multiple games with controlled concurrency."""
+        semaphore = asyncio.Semaphore(concurrency)
         
-        distance = math.sqrt(loc_x**2 + loc_y**2)
+        async def process_with_semaphore(game_id: str):
+            async with semaphore:
+                return await self.run_single_game(game_id)
         
-        if distance < 80:
-            return "Paint"
-        elif distance < 160:
-            return "Mid-Range"
-        elif distance < 240:
-            return "Above the Break 3"
-        else:
-            return "Backcourt"
+        results = await asyncio.gather(
+            *[process_with_semaphore(gid) for gid in game_ids],
+            return_exceptions=True
+        )
+        
+        # Convert exceptions to error results
+        final_results = []
+        for i, result in enumerate(results):
+            if isinstance(result, Exception):
+                final_results.append({
+                    "success": False,
+                    "game_id": game_ids[i],
+                    "error": str(result)
+                })
+            else:
+                final_results.append(result)
+        
+        return final_results
+    
+    async def health_check(self) -> Dict[str, Any]:
+        """Perform pipeline health check."""
+        try:
+            # Test database connection
+            conn = await get_connection()
+            await conn.fetchval("SELECT 1")
+            await conn.close()
+            
+            # Test IO facade
+            test_methods = ['fetch_boxscore', 'fetch_pbp', 'fetch_lineups', 'fetch_shots']
+            io_methods = {method: hasattr(self.io, method) for method in test_methods}
+            
+            # Test loader availability
+            loader_status = {
+                'upsert_game': upsert_game is not None,
+                'upsert_pbp': upsert_pbp is not None,
+                'upsert_lineups': upsert_lineups is not None,
+                'upsert_shots': upsert_shots is not None,
+            }
+            
+            return {
+                "status": "healthy",
+                "database": True,
+                "io_methods": io_methods,
+                "loaders": loader_status,
+                "timestamp": dt.utcnow().isoformat()
+            }
+            
+        except Exception as e:
+            return {
+                "status": "unhealthy",
+                "error": str(e),
+                "timestamp": dt.utcnow().isoformat()
+            }

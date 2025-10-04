@@ -1,66 +1,46 @@
-"""Lineup extraction functions - no preprocessing here."""
+"""Lineup extraction functions - shape-only, returns list of dicts."""
 
-from typing import List, Dict, Any
+from typing import Dict, Any, List
 
 
-def extract_lineups_from_response(resp: dict) -> list[dict]:
-    """
-    Extract lineup data from boxscore response.
-    Returns list of dicts with TEAM_ID, PERIOD, PLAYER_IDS (list[int]), SECS (int).
+def extract_lineups_from_response(resp: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Extract lineup stints from NBA Stats response - shape only.
+    
+    Args:
+        resp: Raw NBA Stats lineups response
+        
+    Returns:
+        List of dictionaries with lineup data: TEAM_ID, PERIOD, PLAYER_IDS, SECS
     """
     lineups = []
     
-    if not isinstance(resp, dict) or 'resultSets' not in resp:
+    # Handle NBA Stats resultSets structure
+    result_sets = resp.get("resultSets", [])
+    if not result_sets:
         return lineups
     
-    # Look for starting lineups in PlayerStats result sets
-    for result_set in resp.get('resultSets', []):
-        name = result_set.get('name', '')
+    # Find lineup-related result set
+    lineup_set = None
+    for rs in result_sets:
+        name = rs.get("name", "")
+        if "lineup" in name.lower() or "stint" in name.lower():
+            lineup_set = rs
+            break
+    
+    if not lineup_set:
+        return lineups
+    
+    headers = lineup_set.get("headers", [])
+    rows = lineup_set.get("rowSet", [])
+    
+    for row in rows:
+        if len(row) != len(headers):
+            continue
+            
+        # Convert to dict
+        lineup_dict = dict(zip(headers, row))
         
-        if 'PlayerStats' in name:
-            headers = result_set.get('headers', [])
-            rows = result_set.get('rowSet', [])
-            
-            # Group starters by team
-            team_starters = {}
-            
-            for row in rows:
-                if len(row) == len(headers):
-                    player_dict = dict(zip(headers, row))
-                    
-                    # Check if player was a starter (has START_POSITION)
-                    start_position = player_dict.get('START_POSITION')
-                    if start_position and str(start_position).strip():
-                        team_id = player_dict.get('TEAM_ID')
-                        player_id = player_dict.get('PLAYER_ID')
-                        minutes = player_dict.get('MIN', 0)
-                        
-                        if team_id not in team_starters:
-                            team_starters[team_id] = []
-                        
-                        team_starters[team_id].append({
-                            'player_id': player_id,
-                            'minutes': minutes
-                        })
-            
-            # Convert to lineup format
-            for team_id, starters in team_starters.items():
-                if len(starters) == 5:  # Valid starting lineup
-                    player_ids = [s['player_id'] for s in starters]
-                    
-                    # Estimate seconds played for starting lineup
-                    # Convert minutes to seconds, use default if no minutes data
-                    try:
-                        avg_minutes = sum(float(s['minutes'] or 0) for s in starters) / len(starters)
-                        seconds = int(avg_minutes * 60) if avg_minutes > 0 else 720  # Default 12 min
-                    except (ValueError, TypeError):
-                        seconds = 720  # Default 12 minutes in seconds
-                    
-                    lineups.append({
-                        'TEAM_ID': team_id,
-                        'PERIOD': 1,  # Starting lineup is period 1
-                        'PLAYER_IDS': player_ids,
-                        'SECS': seconds
-                    })
+        # Return as-is - transformer will handle player ID parsing
+        lineups.append(lineup_dict)
     
     return lineups
