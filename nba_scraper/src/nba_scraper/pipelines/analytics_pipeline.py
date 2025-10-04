@@ -331,10 +331,80 @@ class AnalyticsPipeline:
     async def _compute_team_pace_efficiency(self, conn, where_clause: str, params: List):
         """Compute team pace and efficiency ratings."""
         
-        # This would involve more complex calculations comparing team performance
-        # to league averages and opponent performance
+        # First update defensive ratings using opponent data
+        defensive_rating_query = """
+        WITH opponent_stats AS (
+            SELECT 
+                tgs1.game_id,
+                tgs1.team_id,
+                tgs2.points as opp_points,
+                tgs2.possessions_estimated as opp_possessions
+            FROM team_game_stats tgs1
+            JOIN team_game_stats tgs2 ON tgs1.game_id = tgs2.game_id AND tgs1.team_id != tgs2.team_id
+            WHERE EXISTS (
+                SELECT 1 FROM games g 
+                WHERE g.game_id = tgs1.game_id AND {where_clause}
+            )
+        )
+        UPDATE team_game_stats 
+        SET defensive_rating = CASE 
+            WHEN os.opp_possessions > 0 THEN (os.opp_points * 100.0 / os.opp_possessions)
+            ELSE 0 
+        END
+        FROM opponent_stats os
+        WHERE team_game_stats.game_id = os.game_id 
+        AND team_game_stats.team_id = os.team_id
+        """.format(where_clause=where_clause)
         
-        logger.info("Team pace and efficiency metrics computed")
+        await conn.execute(defensive_rating_query, *params)
+        
+        # Compute league-relative efficiency metrics
+        efficiency_query = """
+        WITH league_averages AS (
+            SELECT 
+                AVG(offensive_rating) as avg_off_rating,
+                AVG(defensive_rating) as avg_def_rating,
+                AVG(pace) as avg_pace,
+                STDDEV(offensive_rating) as std_off_rating,
+                STDDEV(defensive_rating) as std_def_rating,
+                STDDEV(pace) as std_pace
+            FROM team_game_stats tgs
+            WHERE EXISTS (
+                SELECT 1 FROM games g 
+                WHERE g.game_id = tgs.game_id AND {where_clause}
+            )
+        )
+        UPDATE team_game_stats 
+        SET 
+            net_rating = offensive_rating - defensive_rating,
+            
+            pace_z_score = CASE 
+                WHEN la.std_pace > 0 THEN (pace - la.avg_pace) / la.std_pace 
+                ELSE 0 
+            END,
+            
+            offensive_efficiency_z = CASE 
+                WHEN la.std_off_rating > 0 THEN (offensive_rating - la.avg_off_rating) / la.std_off_rating 
+                ELSE 0 
+            END,
+            
+            defensive_efficiency_z = CASE 
+                WHEN la.std_def_rating > 0 THEN (la.avg_def_rating - defensive_rating) / la.std_def_rating 
+                ELSE 0 
+            END,
+            
+            updated_at = CURRENT_TIMESTAMP
+            
+        FROM league_averages la
+        WHERE EXISTS (
+            SELECT 1 FROM games g 
+            WHERE g.game_id = team_game_stats.game_id AND {where_clause}
+        )
+        """.format(where_clause=where_clause)
+        
+        await conn.execute(efficiency_query, *params)
+        
+        logger.info("Team pace and efficiency metrics computed with league-relative z-scores")
     
     async def _compute_player_usage_rates(self, conn, where_clause: str, params: List, player_ids: Optional[List[int]]):
         """Compute player usage rates and involvement metrics."""

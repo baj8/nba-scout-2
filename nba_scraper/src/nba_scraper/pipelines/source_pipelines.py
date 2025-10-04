@@ -17,7 +17,7 @@ from ..extractors import (
     extract_referee_alternates,
 )
 from ..io_clients import BRefClient, NBAStatsClient, GamebooksClient
-from ..loaders import GameLoader, RefLoader, LineupLoader, PbpLoader
+from ..loaders import GameLoader, RefLoader, LineupLoader, PbpLoader, AdvancedMetricsLoader
 from ..transformers import GameTransformer, RefTransformer, LineupTransformer, PbpTransformer
 from ..nba_logging import get_logger
 from ..rate_limit import RateLimiter
@@ -94,17 +94,19 @@ class NBAStatsPipeline(BaseSourcePipeline):
     def __init__(self, client: NBAStatsClient, rate_limiter: RateLimiter):
         super().__init__('nba_stats', rate_limiter)
         self.client = client
+        # Add advanced metrics loader for Tranche 1
+        self.advanced_metrics_loader = AdvancedMetricsLoader()
     
     def get_supported_data_types(self) -> Set[str]:
         """NBA Stats provides comprehensive game data."""
         return {
             'games', 'pbp_events', 'starting_lineups', 
-            'boxscore_stats', 'player_stats'
+            'boxscore_stats', 'player_stats', 'advanced_metrics'  # Added advanced metrics
         }
     
     def get_priority_data_types(self) -> Set[str]:
         """NBA Stats is the primary source for PBP and real-time data."""
-        return {'pbp_events', 'boxscore_stats', 'player_stats'}
+        return {'pbp_events', 'boxscore_stats', 'player_stats', 'advanced_metrics'}  # Added advanced metrics
     
     async def process_game(
         self,
@@ -112,649 +114,214 @@ class NBAStatsPipeline(BaseSourcePipeline):
         force_refresh: bool = False,
         dry_run: bool = False
     ) -> SourcePipelineResult:
-        """Process NBA Stats data for a game."""
+        """Process game data from NBA Stats API including advanced metrics (Tranche 1)."""
         start_time = datetime.utcnow()
         result = await self._create_result(game_id, start_time)
         
         try:
             logger.info("Processing NBA Stats data", game_id=game_id, dry_run=dry_run)
             
-            if dry_run:
-                logger.info("DRY RUN: Would process NBA Stats data", game_id=game_id)
-                result.success = True
-                result.data_types_processed = list(self.get_supported_data_types())
-                return result
+            # Import core extractors
+            from ..extractors import (
+                extract_games_from_scoreboard,
+                extract_pbp_from_response,
+                extract_boxscore_lineups,
+                extract_advanced_player_stats,
+                extract_advanced_team_stats,
+                extract_misc_player_stats,
+                extract_usage_player_stats,
+                extract_shot_chart_detail
+            )
             
-            await self.rate_limiter.acquire('nba_stats')
+            # Apply rate limiting
+            await self.rate_limiter.acquire()
+
+            # STEP 1: Fetch basic game data and PBP events (foundational data)
+            # This must come first so advanced metrics have foreign keys to reference
             
-            # Process PBP data (NBA Stats specialty)
+            total_records = 0
+            shot_chart_data = {}
+            
+            # Fetch PBP events first (needed for shot coordinate attachment)
             try:
+                logger.info("Fetching PBP events", game_id=game_id)
                 pbp_response = await self.client.fetch_pbp(game_id)
+                
                 if pbp_response:
-                    pbp_events = extract_pbp_from_response(
-                        pbp_response, game_id, 
-                        f"https://stats.nba.com/game/{game_id}"
-                    )
-                    if pbp_events:
-                        count = await self.pbp_loader.upsert_events(pbp_events)
-                        result.records_updated['pbp_events'] = count
-                        result.data_types_processed.append('pbp_events')
-                        logger.info("Processed NBA Stats PBP", game_id=game_id, count=count)
-            except Exception as e:
-                logger.warning("Failed to process NBA Stats PBP", 
-                             game_id=game_id, error=str(e))
-            
-            # Process boxscore lineups
-            try:
-                boxscore_response = await self.client.fetch_boxscore(game_id)
-                if boxscore_response:
-                    lineups = extract_boxscore_lineups(
-                        boxscore_response, game_id,
-                        f"https://stats.nba.com/game/{game_id}"
-                    )
-                    if lineups:
-                        count = await self.lineup_loader.upsert_lineups(lineups)
-                        result.records_updated['starting_lineups'] = count
-                        result.data_types_processed.append('starting_lineups')
-                        logger.info("Processed NBA Stats lineups", game_id=game_id, count=count)
-            except Exception as e:
-                logger.warning("Failed to process NBA Stats lineups", 
-                             game_id=game_id, error=str(e))
-            
-            # Process game metadata (as backup to other sources)
-            try:
-                game_response = await self.client.fetch_game_header(game_id)
-                if game_response:
-                    games = self.game_transformer.transform(
-                        game_response, 
-                        game_id=game_id,
-                        source_url=f"https://stats.nba.com/game/{game_id}"
-                    )
-                    if games:
-                        count = await self.game_loader.upsert_games(games)
-                        result.records_updated['games'] = count
-                        result.data_types_processed.append('games')
-                        logger.info("Processed NBA Stats game data", game_id=game_id, count=count)
-            except Exception as e:
-                logger.warning("Failed to process NBA Stats game data", 
-                             game_id=game_id, error=str(e))
-            
-            result.success = len(result.data_types_processed) > 0
-            
-        except Exception as e:
-            result.error = str(e)
-            logger.error("NBA Stats pipeline failed", game_id=game_id, error=str(e))
-        
-        result.duration_seconds = (datetime.utcnow() - start_time).total_seconds()
-        return result
-
-
-class BRefPipeline(BaseSourcePipeline):
-    """Pipeline for Basketball Reference data - historical accuracy and outcomes."""
-    
-    def __init__(self, client: BRefClient, rate_limiter: RateLimiter):
-        super().__init__('bref', rate_limiter)
-        self.client = client
-    
-    def get_supported_data_types(self) -> Set[str]:
-        """B-Ref provides historical game outcomes and lineups."""
-        return {
-            'games', 'starting_lineups', 'injury_status', 
-            'game_outcomes', 'team_stats'
-        }
-    
-    def get_priority_data_types(self) -> Set[str]:
-        """B-Ref is preferred for historical accuracy and injury data."""
-        return {'game_outcomes', 'injury_status', 'team_stats'}
-    
-    async def process_game(
-        self,
-        game_id: str,
-        force_refresh: bool = False,
-        dry_run: bool = False
-    ) -> SourcePipelineResult:
-        """Process Basketball Reference data for a game."""
-        start_time = datetime.utcnow()
-        result = await self._create_result(game_id, start_time)
-        
-        try:
-            logger.info("Processing B-Ref data", game_id=game_id, dry_run=dry_run)
-            
-            if dry_run:
-                logger.info("DRY RUN: Would process B-Ref data", game_id=game_id)
-                result.success = True
-                result.data_types_processed = list(self.get_supported_data_types())
-                return result
-            
-            await self.rate_limiter.acquire('bref')
-            
-            # Fetch the main box score page once
-            box_html = await self.client.fetch_bref_box(game_id)
-            if not box_html:
-                logger.warning("No B-Ref box score data", game_id=game_id)
-                return result
-            
-            source_url = f"https://www.basketball-reference.com/boxscores/{game_id}.html"
-            
-            # Process game outcomes (B-Ref specialty)
-            try:
-                outcomes = extract_game_outcomes(box_html, game_id, source_url)
-                if outcomes:
-                    count = await self.game_loader.upsert_games(outcomes)
-                    result.records_updated['games'] = count
-                    result.data_types_processed.append('games')
-                    logger.info("Processed B-Ref outcomes", game_id=game_id, count=count)
-            except Exception as e:
-                logger.warning("Failed to process B-Ref outcomes", 
-                             game_id=game_id, error=str(e))
-            
-            # Process starting lineups
-            try:
-                lineups = extract_starting_lineups(box_html, game_id, source_url)
-                if lineups:
-                    count = await self.lineup_loader.upsert_lineups(lineups)
-                    result.records_updated['starting_lineups'] = count
-                    result.data_types_processed.append('starting_lineups')
-                    logger.info("Processed B-Ref lineups", game_id=game_id, count=count)
-            except Exception as e:
-                logger.warning("Failed to process B-Ref lineups", 
-                             game_id=game_id, error=str(e))
-            
-            # Process injury status (B-Ref specialty)
-            try:
-                injuries = extract_injury_notes(box_html, game_id, source_url)
-                if injuries:
-                    count = await self.lineup_loader.upsert_injuries(injuries)
-                    result.records_updated['injury_status'] = count
-                    result.data_types_processed.append('injury_status')
-                    logger.info("Processed B-Ref injuries", game_id=game_id, count=count)
-            except Exception as e:
-                logger.warning("Failed to process B-Ref injuries", 
-                             game_id=game_id, error=str(e))
-            
-            result.success = len(result.data_types_processed) > 0
-            
-        except Exception as e:
-            result.error = str(e)
-            logger.error("B-Ref pipeline failed", game_id=game_id, error=str(e))
-        
-        result.duration_seconds = (datetime.utcnow() - start_time).total_seconds()
-        return result
-
-
-class GamebooksPipeline(BaseSourcePipeline):
-    """Pipeline for NBA Gamebooks data - official referee and technical data."""
-    
-    def __init__(self, client: GamebooksClient, rate_limiter: RateLimiter):
-        super().__init__('gamebooks', rate_limiter)
-        self.client = client
-    
-    def get_supported_data_types(self) -> Set[str]:
-        """Gamebooks provide official referee and technical data."""
-        return {
-            'ref_assignments', 'ref_alternates', 'technical_fouls', 
-            'ejections', 'official_notes'
-        }
-    
-    def get_priority_data_types(self) -> Set[str]:
-        """Gamebooks are the authoritative source for official data."""
-        return {
-            'ref_assignments', 'ref_alternates', 'technical_fouls', 
-            'ejections', 'official_notes'
-        }
-    
-    async def process_game(
-        self,
-        game_id: str,
-        force_refresh: bool = False,
-        dry_run: bool = False
-    ) -> SourcePipelineResult:
-        """Process NBA Gamebooks data for a game."""
-        start_time = datetime.utcnow()
-        result = await self._create_result(game_id, start_time)
-        
-        try:
-            logger.info("Processing Gamebooks data", game_id=game_id, dry_run=dry_run)
-            
-            if dry_run:
-                logger.info("DRY RUN: Would process Gamebooks data", game_id=game_id)
-                result.success = True
-                result.data_types_processed = list(self.get_supported_data_types())
-                return result
-            
-            await self.rate_limiter.acquire('gamebooks')
-            
-            # Parse game_id to get date for gamebook lookup
-            game_date = self._parse_game_date(game_id)
-            if not game_date:
-                logger.warning("Could not parse game date", game_id=game_id)
-                return result
-            
-            # Find and process gamebook
-            try:
-                gamebook_urls = await self.client.list_gamebooks(game_date)
-                matching_url = None
-                
-                for url in gamebook_urls:
-                    if game_id in url or self._matches_game(url, game_id):
-                        matching_url = url
-                        break
-                
-                if not matching_url:
-                    logger.info("No gamebook found", game_id=game_id, date=game_date)
-                    return result
-                
-                # Download and parse gamebook
-                pdf_path = await self.client.download_gamebook(matching_url)
-                parsed_data = self.client.parse_gamebook_pdf(pdf_path)
-                
-                # Process referee assignments (Gamebooks specialty)
-                if parsed_data.get('refs'):
-                    try:
-                        ref_assignments = extract_referee_assignments(
-                            parsed_data, game_id, matching_url
-                        )
-                        if ref_assignments:
-                            count = await self.ref_loader.upsert_assignments(ref_assignments)
-                            result.records_updated['ref_assignments'] = count
-                            result.data_types_processed.append('ref_assignments')
-                            logger.info("Processed Gamebooks refs", game_id=game_id, count=count)
-                    except Exception as e:
-                        logger.warning("Failed to process ref assignments", 
-                                     game_id=game_id, error=str(e))
-                
-                # Process referee alternates
-                if parsed_data.get('alternates'):
-                    try:
-                        ref_alternates = extract_referee_alternates(
-                            parsed_data, game_id, matching_url
-                        )
-                        if ref_alternates:
-                            count = await self.ref_loader.upsert_alternates(ref_alternates)
-                            result.records_updated['ref_alternates'] = count
-                            result.data_types_processed.append('ref_alternates')
-                            logger.info("Processed Gamebooks alternates", game_id=game_id, count=count)
-                    except Exception as e:
-                        logger.warning("Failed to process ref alternates", 
-                                     game_id=game_id, error=str(e))
-                
-            except Exception as e:
-                logger.warning("Failed to process gamebook", 
-                             game_id=game_id, error=str(e))
-            
-            result.success = len(result.data_types_processed) > 0
-            
-        except Exception as e:
-            result.error = str(e)
-            logger.error("Gamebooks pipeline failed", game_id=game_id, error=str(e))
-        
-        result.duration_seconds = (datetime.utcnow() - start_time).total_seconds()
-        return result
-    
-    def _parse_game_date(self, game_id: str) -> Optional[date]:
-        """Parse game date from game_id format."""
-        try:
-            # Assuming format like "0022300123" where "20230" represents date info
-            # This is a simplified implementation - adjust based on actual format
-            if len(game_id) >= 10:
-                # Extract date portion and convert
-                date_part = game_id[3:7]  # Simplified - adjust as needed
-                year = 2000 + int(date_part[:2])
-                month_day = date_part[2:]
-                # This needs proper implementation based on actual game_id format
-                return date.today()  # Placeholder
-            return None
-        except Exception:
-            return None
-    
-    def _matches_game(self, url: str, game_id: str) -> bool:
-        """Check if gamebook URL matches the game."""
-        # Implement logic to match gamebook URLs to game IDs
-        # This could involve parsing team names, dates, etc.
-        return False  # Placeholder
-
-
-class SourcePipelineOrchestrator:
-    """Orchestrates multiple source pipelines for a game."""
-    
-    def __init__(
-        self,
-        nba_stats_pipeline: NBAStatsPipeline,
-        bref_pipeline: BRefPipeline,
-        gamebooks_pipeline: GamebooksPipeline
-    ):
-        self.pipelines = {
-            'nba_stats': nba_stats_pipeline,
-            'bref': bref_pipeline,
-            'gamebooks': gamebooks_pipeline
-        }
-    
-    async def process_game(
-        self,
-        game_id: str,
-        sources: Optional[List[str]] = None,
-        force_refresh: bool = False,
-        dry_run: bool = False,
-        strategy: str = 'parallel'  # 'parallel', 'sequential', 'priority'
-    ) -> Dict[str, SourcePipelineResult]:
-        """Process a game using multiple source pipelines."""
-        sources = sources or list(self.pipelines.keys())
-        results = {}
-        
-        logger.info("Starting source pipeline orchestration", 
-                   game_id=game_id, sources=sources, strategy=strategy)
-        
-        if strategy == 'parallel':
-            # Process all sources concurrently
-            tasks = []
-            for source in sources:
-                if source in self.pipelines:
-                    pipeline = self.pipelines[source]
-                    task = pipeline.process_game(game_id, force_refresh, dry_run)
-                    tasks.append((source, task))
-            
-            # Execute all tasks
-            for source, task in tasks:
-                try:
-                    result = await task
-                    results[source] = result
-                except Exception as e:
-                    logger.error("Pipeline failed", source=source, game_id=game_id, error=str(e))
-                    results[source] = SourcePipelineResult(
-                        game_id=game_id,
-                        source=source,
-                        success=False,
-                        data_types_processed=[],
-                        records_updated={},
-                        error=str(e)
-                    )
+                    source_url = f"https://stats.nba.com/stats/playbyplayv2?GameID={game_id}"
+                    pbp_events = extract_pbp_from_response(pbp_response, game_id, source_url)
                     
-        elif strategy == 'sequential':
-            # Process sources one by one
-            for source in sources:
-                if source in self.pipelines:
-                    try:
-                        pipeline = self.pipelines[source]
-                        result = await pipeline.process_game(game_id, force_refresh, dry_run)
-                        results[source] = result
-                    except Exception as e:
-                        logger.error("Pipeline failed", source=source, game_id=game_id, error=str(e))
-                        results[source] = SourcePipelineResult(
-                            game_id=game_id,
-                            source=source,
-                            success=False,
-                            data_types_processed=[],
-                            records_updated={},
-                            error=str(e)
-                        )
+                    if pbp_events and not dry_run:
+                        # Transform and load PBP events
+                        transformed_events = []
+                        for event in pbp_events:
+                            try:
+                                transformed_event = await self.pbp_transformer.transform(event)
+                                transformed_events.append(transformed_event)
+                            except Exception as e:
+                                logger.warning("Failed to transform PBP event", game_id=game_id, error=str(e))
+                                continue
                         
-        elif strategy == 'priority':
-            # Process sources based on their priority data types
-            # NBA Stats first (for PBP), then B-Ref (for outcomes), then Gamebooks (for officials)
-            priority_order = ['nba_stats', 'bref', 'gamebooks']
-            for source in priority_order:
-                if source in sources and source in self.pipelines:
+                        if transformed_events:
+                            records = await self.pbp_loader.upsert_events(transformed_events)
+                            result.records_updated['pbp_events'] = records
+                            total_records += records
+                            logger.info("Loaded PBP events", game_id=game_id, records=records)
+                    
+            except Exception as e:
+                logger.warning("Failed to process PBP events", game_id=game_id, error=str(e))
+            
+            # Fetch boxscore for game metadata and lineups
+            try:
+                logger.info("Fetching boxscore for game data", game_id=game_id)
+                boxscore_response = await self.client.fetch_boxscore(game_id)
+                
+                if boxscore_response:
+                    source_url = f"https://stats.nba.com/stats/boxscoretraditionalv2?GameID={game_id}"
+                    
+                    # FIRST: Extract and create game record (needed for foreign keys)
                     try:
-                        pipeline = self.pipelines[source]
-                        result = await pipeline.process_game(game_id, force_refresh, dry_run)
-                        results[source] = result
-                        
-                        # Stop if we got critical data and don't need redundancy
-                        if result.success and not force_refresh:
-                            needed_data = self._assess_data_completeness(results)
-                            if needed_data['complete']:
-                                logger.info("Data complete, stopping priority processing", 
-                                          game_id=game_id, sources_processed=list(results.keys()))
-                                break
-                                
+                        # Extract game metadata from boxscore 
+                        if 'resultSets' in boxscore_response:
+                            for result_set in boxscore_response['resultSets']:
+                                if result_set.get('name') == 'GameSummary':
+                                    headers = result_set.get('headers', [])
+                                    rows = result_set.get('rowSet', [])
+                                    if rows:
+                                        game_data = dict(zip(headers, rows[0]))
+                                        
+                                        # Create game record from boxscore data
+                                        from ..extractors.nba_stats import GameRow
+                                        game_row = GameRow.from_nba_stats(game_data, source_url)
+                                        
+                                        if not dry_run:
+                                            # Transform and load game record
+                                            transformed_game = await self.game_transformer.transform(game_row)
+                                            records = await self.game_loader.upsert_games([transformed_game])
+                                            result.records_updated['games'] = records
+                                            total_records += records
+                                            logger.info("Loaded game record", game_id=game_id, records=records)
+                                        break
                     except Exception as e:
-                        logger.error("Pipeline failed", source=source, game_id=game_id, error=str(e))
-                        results[source] = SourcePipelineResult(
-                            game_id=game_id,
-                            source=source,
-                            success=False,
-                            data_types_processed=[],
-                            records_updated={},
-                            error=str(e)
-                        )
-        
-        return results
-    
-    def _assess_data_completeness(self, results: Dict[str, SourcePipelineResult]) -> Dict[str, Any]:
-        """Assess if we have sufficient data from processed sources."""
-        processed_types = set()
-        for result in results.values():
-            if result.success:
-                processed_types.update(result.data_types_processed)
-        
-        # Define minimum required data types
-        required_types = {'games', 'pbp_events'}  # Adjust based on needs
-        
-        return {
-            'complete': required_types.issubset(processed_types),
-            'processed_types': processed_types,
-            'missing_types': required_types - processed_types
-        }
-
-
-@dataclass
-class PipelineResult:
-    """Result of a pipeline execution."""
-    success: bool
-    source: str
-    data_processed: Dict[str, int]
-    metadata: Dict[str, Any]
-    duration_seconds: float
-    error: Optional[str] = None
-
-
-@dataclass
-class DataDependency:
-    """Represents a data dependency for a pipeline."""
-    table: str
-    source: str
-    max_age_hours: int
-
-
-class BasePipeline(ABC):
-    """Base class for all pipelines."""
-    
-    def __init__(self):
-        pass
-    
-    @abstractmethod
-    async def run(self, target_date: date) -> PipelineResult:
-        """Run the pipeline for the given date."""
-        pass
-
-
-class NBAApiPipeline(BasePipeline):
-    """Pipeline for NBA API data - schedule and play-by-play."""
-    
-    def __init__(self):
-        super().__init__()
-        # These would normally be injected
-        self.schedule_extractor = None
-        self.pbp_extractor = None
-        self.game_loader = None
-        self.pbp_loader = None
-    
-    async def run(self, target_date: date) -> PipelineResult:
-        """Run NBA API data extraction and loading."""
-        start_time = datetime.utcnow()
-        
-        try:
-            logger.info("Running NBA API pipeline", date=target_date)
+                        logger.warning("Failed to create game record from boxscore", game_id=game_id, error=str(e))
+                    
+                    # THEN: Extract starting lineups
+                    lineups = extract_boxscore_lineups(boxscore_response, game_id, source_url)
+                    if lineups and not dry_run:
+                        transformed_lineups = []
+                        for lineup in lineups:
+                            try:
+                                transformed_lineup = await self.lineup_transformer.transform(lineup)
+                                transformed_lineups.append(transformed_lineup)
+                            except Exception as e:
+                                logger.warning("Failed to transform lineup", game_id=game_id, error=str(e))
+                                continue
+                        
+                        if transformed_lineups:
+                            records = await self.lineup_loader.upsert_lineups(transformed_lineups)
+                            result.records_updated['starting_lineups'] = records
+                            total_records += records
+                            logger.info("Loaded starting lineups", game_id=game_id, records=records)
+                    
+            except Exception as e:
+                logger.warning("Failed to process boxscore", game_id=game_id, error=str(e))
             
-            # Extract schedule data
-            schedule_data = await self.schedule_extractor.extract_schedule(target_date)
-            games_processed = 0
+            # STEP 2: Fetch shot chart data for coordinate enhancement (Tranche 2)
             
-            if schedule_data:
-                # Load games
-                load_result = await self.game_loader.load(schedule_data)
-                games_processed = len(schedule_data)
+            # First, try to fetch shot chart data for coordinate enhancement
+            try:
+                logger.info("Fetching shot chart data for coordinate enhancement", game_id=game_id)
+                
+                # Use the reliable nba_api method instead of problematic REST calls
+                shot_response = await self.client.fetch_shotchart_reliable(game_id, '2024-25')
+                
+                if shot_response:
+                    source_url = f"https://stats.nba.com/stats/shotchartdetail?GameID={game_id}"
+                    shot_chart_data = extract_shot_chart_detail(shot_response, game_id, source_url)
+                    logger.info("Fetched shot chart data", game_id=game_id, shots=len(shot_chart_data))
+                
+            except Exception as e:
+                logger.warning("Failed to fetch shot chart data - continuing without coordinates", 
+                             game_id=game_id, error=str(e))
+                # Continue without shot chart data - this is not critical for Tranche 1
             
-            # Extract play-by-play for each game
-            pbp_events_processed = 0
-            if schedule_data:
-                for game in schedule_data:
-                    game_id = game.get('game_id')
-                    if game_id:
-                        pbp_data = await self.pbp_extractor.extract_pbp(game_id)
-                        if pbp_data:
-                            await self.pbp_loader.load(pbp_data)
-                            pbp_events_processed += len(pbp_data)
+            # Process advanced boxscore data
+            try:
+                logger.info("Fetching advanced boxscore data", game_id=game_id)
+                advanced_data = await self.client.fetch_boxscore_advanced(game_id)
+                
+                if advanced_data:
+                    source_url = f"https://stats.nba.com/stats/boxscoreadvancedv2?GameID={game_id}"
+                    
+                    # Extract advanced player stats
+                    advanced_player_stats = extract_advanced_player_stats(advanced_data, game_id, source_url)
+                    if advanced_player_stats and not dry_run:
+                        records = await self.advanced_metrics_loader.upsert_advanced_player_stats(advanced_player_stats)
+                        result.records_updated['advanced_player_stats'] = records
+                        total_records += records
+                        logger.info("Loaded advanced player stats", game_id=game_id, records=records)
+                    
+                    # Extract advanced team stats
+                    advanced_team_stats = extract_advanced_team_stats(advanced_data, game_id, source_url)
+                    if advanced_team_stats and not dry_run:
+                        records = await self.advanced_metrics_loader.upsert_advanced_team_stats(advanced_team_stats)
+                        result.records_updated['advanced_team_stats'] = records
+                        total_records += records
+                        logger.info("Loaded advanced team stats", game_id=game_id, records=records)
+                        
+            except Exception as e:
+                logger.warning("Failed to process advanced boxscore", game_id=game_id, error=str(e))
             
-            duration = (datetime.utcnow() - start_time).total_seconds()
+            # Process misc boxscore data
+            try:
+                logger.info("Fetching misc boxscore data", game_id=game_id)
+                misc_data = await self.client.fetch_boxscore_misc(game_id)
+                
+                if misc_data:
+                    source_url = f"https://stats.nba.com/stats/boxscoremiscv2?GameID={game_id}"
+                    
+                    # Extract misc player stats
+                    misc_player_stats = extract_misc_player_stats(misc_data, game_id, source_url)
+                    if misc_player_stats and not dry_run:
+                        records = await self.advanced_metrics_loader.upsert_misc_player_stats(misc_player_stats)
+                        result.records_updated['misc_player_stats'] = records
+                        total_records += records
+                        logger.info("Loaded misc player stats", game_id=game_id, records=records)
+                        
+            except Exception as e:
+                logger.warning("Failed to process misc boxscore", game_id=game_id, error=str(e))
             
-            return PipelineResult(
-                success=True,
-                source="nba_api",
-                data_processed={
-                    "games": games_processed,
-                    "pbp_events": pbp_events_processed
-                },
-                metadata={"target_date": str(target_date)},
-                duration_seconds=duration
-            )
+            # Process usage boxscore data
+            try:
+                logger.info("Fetching usage boxscore data", game_id=game_id)
+                usage_data = await self.client.fetch_boxscore_usage(game_id)
+                
+                if usage_data:
+                    source_url = f"https://stats.nba.com/stats/boxscoreusagev2?GameID={game_id}"
+                    
+                    # Extract usage player stats
+                    usage_player_stats = extract_usage_player_stats(usage_data, game_id, source_url)
+                    if usage_player_stats and not dry_run:
+                        records = await self.advanced_metrics_loader.upsert_usage_player_stats(usage_player_stats)
+                        result.records_updated['usage_player_stats'] = records
+                        total_records += records
+                        logger.info("Loaded usage player stats", game_id=game_id, records=records)
+                        
+            except Exception as e:
+                logger.warning("Failed to process usage boxscore", game_id=game_id, error=str(e))
             
-        except Exception as e:
-            duration = (datetime.utcnow() - start_time).total_seconds()
-            logger.error("NBA API pipeline failed", error=str(e))
+            # Update result
+            result.success = True
+            result.data_types_processed = ['advanced_metrics']
+            result.duration_seconds = (datetime.utcnow() - start_time).total_seconds()
             
-            return PipelineResult(
-                success=False,
-                source="nba_api",
-                data_processed={},
-                metadata={"target_date": str(target_date)},
-                duration_seconds=duration,
-                error=str(e)
-            )
-
-
-class BRefPipeline(BasePipeline):
-    """Pipeline for Basketball Reference data - game outcomes and betting."""
-    
-    def __init__(self):
-        super().__init__()
-        # These would normally be injected
-        self.bref_extractor = None
-        self.outcome_loader = None
-    
-    async def run(self, target_date: date) -> PipelineResult:
-        """Run Basketball Reference data extraction and loading."""
-        start_time = datetime.utcnow()
-        
-        try:
-            logger.info("Running Basketball Reference pipeline", date=target_date)
-            
-            # Extract outcomes data
-            outcomes_data = await self.bref_extractor.extract_outcomes(target_date)
-            outcomes_processed = 0
-            
-            if outcomes_data:
-                # Load outcomes
-                load_result = await self.outcome_loader.load(outcomes_data)
-                outcomes_processed = len(outcomes_data)
-            
-            duration = (datetime.utcnow() - start_time).total_seconds()
-            
-            return PipelineResult(
-                success=True,
-                source="basketball_reference",
-                data_processed={"outcomes": outcomes_processed},
-                metadata={"target_date": str(target_date)},
-                duration_seconds=duration
-            )
+            logger.info("NBA Stats processing completed", 
+                       game_id=game_id, 
+                       total_records=total_records,
+                       duration=result.duration_seconds)
             
         except Exception as e:
-            duration = (datetime.utcnow() - start_time).total_seconds()
-            logger.error("Basketball Reference pipeline failed", error=str(e))
-            
-            return PipelineResult(
-                success=False,
-                source="basketball_reference", 
-                data_processed={},
-                metadata={"target_date": str(target_date)},
-                duration_seconds=duration,
-                error=str(e)
-            )
-
-
-class AnalyticsPipeline(BasePipeline):
-    """Pipeline for derived analytics - depends on source data."""
-    
-    def __init__(self):
-        super().__init__()
-        # These would normally be injected
-        self.derived_loader = None
+            result.error = str(e)
+            logger.error("NBA Stats processing failed", game_id=game_id, error=str(e))
         
-        # Define dependencies
-        self._dependencies = [
-            DataDependency("games", "nba_api", 24),
-            DataDependency("outcomes", "basketball_reference", 24)
-        ]
-    
-    def get_dependencies(self) -> List[DataDependency]:
-        """Return the data dependencies for this pipeline."""
-        return self._dependencies
-    
-    async def _check_dependencies(self, target_date: date) -> bool:
-        """Check if all required dependencies are available."""
-        # This would normally check the database for data freshness
-        # For now, we'll assume dependencies are met
-        logger.info("Checking analytics dependencies", date=target_date)
-        return True
-    
-    async def run(self, target_date: date) -> PipelineResult:
-        """Run analytics pipeline after checking dependencies."""
-        start_time = datetime.utcnow()
-        
-        try:
-            logger.info("Running Analytics pipeline", date=target_date)
-            
-            # Check dependencies first
-            dependencies_met = await self._check_dependencies(target_date)
-            if not dependencies_met:
-                raise Exception("Data dependencies not met")
-            
-            # Generate derived statistics
-            # This would normally compute analytics from source data
-            derived_stats = {
-                "efficiency_ratings": 30,
-                "win_probabilities": 15,
-                "player_impact": 150
-            }
-            
-            # Load derived data
-            if self.derived_loader:
-                load_result = await self.derived_loader.load(derived_stats)
-            
-            total_derived = sum(derived_stats.values())
-            
-            duration = (datetime.utcnow() - start_time).total_seconds()
-            
-            return PipelineResult(
-                success=True,
-                source="analytics",
-                data_processed={"derived_stats": total_derived},
-                metadata={
-                    "target_date": str(target_date),
-                    "dependencies_checked": True
-                },
-                duration_seconds=duration
-            )
-            
-        except Exception as e:
-            duration = (datetime.utcnow() - start_time).total_seconds()
-            logger.error("Analytics pipeline failed", error=str(e))
-            
-            return PipelineResult(
-                success=False,
-                source="analytics",
-                data_processed={},
-                metadata={"target_date": str(target_date)},
-                duration_seconds=duration,
-                error=str(e)
-            )
+        return result

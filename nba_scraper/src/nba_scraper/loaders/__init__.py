@@ -1,15 +1,13 @@
-"""Database loaders with idempotent upsert operations."""
+"""Simple upsert functions for foundation data."""
 
-from .games import GameLoader
-from .refs import RefLoader
-from .lineups import LineupLoader
-from .pbp import PbpLoader
-from .derived import DerivedLoader
+from .games import upsert_game
+from .pbp import upsert_pbp  
+from .lineups import upsert_lineups
+from .shots import upsert_shots
 
 __all__ = [
-    "GameLoader",
-    "RefLoader", 
-    "LineupLoader",
-    "PbpLoader",
-    "DerivedLoader",
+    'upsert_game',
+    'upsert_pbp',
+    'upsert_lineups', 
+    'upsert_shots'
 ]

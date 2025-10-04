@@ -26,24 +26,40 @@ class TokenBucket:
         self.last_update = time.monotonic()
         self._lock = asyncio.Lock()
     
-    async def acquire(self, tokens: int = 1) -> None:
-        """Acquire tokens from the bucket, blocking if necessary."""
+    async def acquire(self, tokens_or_source=1) -> None:
+        """Acquire tokens from the bucket, blocking if necessary.
+        
+        Args:
+            tokens_or_source: Either number of tokens (int) or source name (str) for backwards compatibility
+        """
         async with self._lock:
             now = time.monotonic()
             elapsed = now - self.last_update
             
-            # Add tokens based on elapsed time
-            self.tokens = min(self.capacity, self.tokens + elapsed * self.rate)
+            # Handle both string source names and integer token counts
+            if isinstance(tokens_or_source, str):
+                # Source name provided - use 1 token (backwards compatibility)
+                tokens = 1
+                logger.debug("Rate limiting source", source=tokens_or_source)
+            else:
+                # Token count provided
+                tokens = int(tokens_or_source) if tokens_or_source is not None else 1
+            
+            # Add tokens based on elapsed time and ensure self.tokens is always float
+            self.tokens = float(min(self.capacity, float(self.tokens) + elapsed * self.rate))
             self.last_update = now
             
-            # Wait if insufficient tokens
-            if self.tokens < tokens:
-                wait_time = (tokens - self.tokens) / self.rate
+            # Wait if insufficient tokens (with explicit type conversion)
+            current_tokens = float(self.tokens)
+            required_tokens = float(tokens)
+            
+            if current_tokens < required_tokens:
+                wait_time = (required_tokens - current_tokens) / self.rate
                 logger.debug("Rate limit reached, waiting", wait_time=wait_time)
                 await asyncio.sleep(wait_time)
-                self.tokens = 0
+                self.tokens = 0.0
             else:
-                self.tokens -= tokens
+                self.tokens = current_tokens - required_tokens
     
     async def __aenter__(self) -> "TokenBucket":
         """Acquire token on context entry."""
@@ -68,9 +84,9 @@ class RateLimiter:
                    requests_per_min=settings.requests_per_min,
                    tokens_per_second=rate_per_second)
     
-    async def acquire(self, tokens: int = 1) -> None:
+    async def acquire(self, tokens_or_source=1) -> None:
         """Acquire tokens for making requests."""
-        await self._bucket.acquire(tokens)
+        await self._bucket.acquire(tokens_or_source)
     
     async def __aenter__(self) -> "RateLimiter":
         """Acquire token on context entry."""
@@ -89,6 +105,6 @@ _rate_limiter: Optional[RateLimiter] = None
 def get_rate_limiter() -> RateLimiter:
     """Get the global rate limiter instance."""
     global _rate_limiter
-    if _rate_limiter is None:
+    if (_rate_limiter is None):
         _rate_limiter = RateLimiter()
     return _rate_limiter

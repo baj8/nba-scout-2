@@ -17,6 +17,9 @@ async def test_actual_backfill_path():
         # Import the actual backfill components
         from nba_scraper.pipelines.backfill import BackfillPipeline
         from nba_scraper.pipelines.season_pipeline import SeasonPipeline
+        from nba_scraper.pipelines.game_pipeline import GamePipeline
+        from nba_scraper.io_clients import BRefClient, NBAStatsClient, GamebooksClient
+        from nba_scraper.rate_limit import RateLimiter
         print("✅ Backfill imports successful")
     except Exception as e:
         print(f"❌ Backfill import failed: {e}")
@@ -42,7 +45,25 @@ async def test_actual_backfill_path():
     try:
         # Test SeasonPipeline initialization (this is what processes individual games)
         print("\n2️⃣ Testing SeasonPipeline initialization...")
-        season_pipeline = SeasonPipeline(sources=['nba_stats'])
+        
+        # Create the required dependencies
+        bref_client = BRefClient()
+        nba_stats_client = NBAStatsClient()
+        gamebooks_client = GamebooksClient()
+        rate_limiter = RateLimiter()
+        
+        game_pipeline = GamePipeline(
+            bref_client=bref_client,
+            nba_stats_client=nba_stats_client,
+            gamebooks_client=gamebooks_client,
+            rate_limiter=rate_limiter
+        )
+        
+        # Use correct constructor signature
+        season_pipeline = SeasonPipeline(
+            game_pipeline=game_pipeline,
+            rate_limiter=rate_limiter
+        )
         print("✅ SeasonPipeline initialized successfully")
     except Exception as e:
         print(f"❌ SeasonPipeline initialization failed: {e}")
@@ -55,8 +76,8 @@ async def test_actual_backfill_path():
     try:
         # This is the exact method that's called in the backfill and failing
         print("\n3️⃣ Testing season pipeline processing...")
-        result = await season_pipeline.process_season('2024-25', batch_size=1)
-        print(f"✅ Season pipeline completed: processed {result['games_processed']} games")
+        result = await season_pipeline.process_season('2024-25', sources=['nba_stats'])
+        print(f"✅ Season pipeline completed: processed {result.games_processed} games")
     except Exception as e:
         print(f"❌ Season pipeline processing failed: {e}")
         if "'<' not supported between instances" in str(e):

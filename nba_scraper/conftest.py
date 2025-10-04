@@ -1,20 +1,31 @@
 """Pytest configuration and fixtures."""
 
 import os
+import sys
+import pathlib
 import pytest
 import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 from typing import AsyncGenerator, Dict, Any
 
+# Ensure tests can import src/
+ROOT = pathlib.Path(__file__).resolve().parents[0]
+SRC = ROOT / "src"
+if str(SRC) not in sys.path:
+    sys.path.insert(0, str(SRC))
+
 # Set test environment before importing our modules
 os.environ['ENVIRONMENT'] = 'test'
 os.environ['DATABASE_URL'] = 'sqlite+aiosqlite:///:memory:'
+
+# Standardized datetime imports
+from datetime import datetime as dt
+import datetime as pydt
 
 from src.nba_scraper.config import get_settings
 from src.nba_scraper.models.pbp_rows import PbpEventRow
 from src.nba_scraper.models.enums import EventType
 from src.nba_scraper.models.game_rows import GameRow
-from datetime import datetime, date
 
 
 @pytest.fixture(scope="session")
@@ -154,8 +165,8 @@ def sample_game_row():
     return GameRow(
         game_id="0022300001",
         season="2023-24",
-        game_date_utc=datetime(2023, 10, 17, 19, 30),
-        game_date_local=date(2023, 10, 17),
+        game_date_utc=dt(2023, 10, 17, 19, 30),
+        game_date_local=pydt.date(2023, 10, 17),
         arena_tz="America/New_York",
         home_team_tricode="BOS",
         away_team_tricode="LAL",

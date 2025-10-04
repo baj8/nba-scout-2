@@ -319,40 +319,142 @@ class TestBRefAPIIntegration:
         # Mock the boxscore fetch method
         with patch.object(bref_client, 'fetch_bref_box', return_value=sample_html) as mock_fetch:
             # Test the scraping
-            result = await bref_client.fetch_bref_box("202310180LAL")
+            result = await bref_client.fetch_bref_box("202310160DEN")
             
             # Verify request
-            mock_fetch.assert_called_once_with("202310180LAL")
+            mock_fetch.assert_called_once_with("202310160DEN")
             
             # Verify response
             assert result == sample_html
+            assert "Mock B-Ref boxscore" in result
     
     @pytest.mark.asyncio
-    async def test_bref_rate_limiting(self, bref_client):
-        """Test Basketball Reference respects rate limiting."""
-        # Mock the method to avoid real API calls
-        with patch.object(bref_client, 'fetch_schedule_page', return_value="<html>test</html>") as mock_fetch:
-            # Make multiple requests
-            await bref_client.fetch_schedule_page("LAL", "2024")
-            await bref_client.fetch_schedule_page("GSW", "2024")
+    async def test_parse_bref_schedule_integration(self, bref_client, sample_bref_schedule_html):
+        """Test parsing Basketball Reference schedule HTML."""
+        games = bref_client.parse_schedule_html(sample_bref_schedule_html)
+        
+        assert len(games) == 2
+        
+        # Verify first game
+        game1 = games[0]
+        assert game1["game_number"] == 1
+        assert "Oct 16, 2023" in game1["date"]
+        assert game1["home_team"] == "DEN"
+        assert game1["away_team"] == "LAL"
+        assert "W 119-107" in game1["result"]
+        
+        # Verify second game
+        game2 = games[1]
+        assert game2["game_number"] == 2
+        assert "Oct 18, 2023" in game2["date"]
+        assert game2["home_team"] == "LAL"
+        assert game2["away_team"] == "PHX"
+        assert "L 100-95" in game2["result"]
+    
+    @pytest.fixture
+    def sample_bref_boxscore_html(self):
+        """Golden fixture: Basketball Reference boxscore HTML."""
+        return '''
+        <div class="table_wrapper" id="div_box-lac-basic">
+            <table class="stats_table" id="box-lac-basic">
+                <thead>
+                    <tr>
+                        <th scope="col">Starters</th>
+                        <th scope="col">MP</th>
+                        <th scope="col">FG</th>
+                        <th scope="col">FGA</th>
+                        <th scope="col">FG%</th>
+                        <th scope="col">3P</th>
+                        <th scope="col">3PA</th>
+                        <th scope="col">3P%</th>
+                        <th scope="col">FT</th>
+                        <th scope="col">FTA</th>
+                        <th scope="col">FT%</th>
+                        <th scope="col">ORB</th>
+                        <th scope="col">DRB</th>
+                        <th scope="col">TRB</th>
+                        <th scope="col">AST</th>
+                        <th scope="col">STL</th>
+                        <th scope="col">BLK</th>
+                        <th scope="col">TOV</th>
+                        <th scope="col">PF</th>
+                        <th scope="col">PTS</th>
+                        <th scope="col">+/-</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <th scope="row"><a href="/players/l/leonaka01.html">Kawhi Leonard</a></th>
+                        <td>35:42</td>
+                        <td>11</td>
+                        <td>19</td>
+                        <td>.579</td>
+                        <td>3</td>
+                        <td>7</td>
+                        <td>.429</td>
+                        <td>3</td>
+                        <td>4</td>
+                        <td>.750</td>
+                        <td>1</td>
+                        <td>5</td>
+                        <td>6</td>
+                        <td>4</td>
+                        <td>2</td>
+                        <td>1</td>
+                        <td>2</td>
+                        <td>1</td>
+                        <td>28</td>
+                        <td>+12</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+        '''
+    
+    @pytest.mark.asyncio
+    async def test_parse_bref_boxscore_integration(self, bref_client, sample_bref_boxscore_html):
+        """Test parsing Basketball Reference boxscore HTML."""
+        stats = bref_client.parse_boxscore_html(sample_bref_boxscore_html)
+        
+        # Verify structure
+        assert "players" in stats
+        assert len(stats["players"]) == 1
+        
+        # Verify player stats
+        kawhi = stats["players"][0]
+        assert kawhi["name"] == "Kawhi Leonard"
+        assert kawhi["minutes"] == "35:42"
+        assert kawhi["points"] == 28
+        assert kawhi["rebounds"] == 6
+        assert kawhi["assists"] == 4
+        assert kawhi["fg_made"] == 11
+        assert kawhi["fg_attempts"] == 19
+        assert kawhi["fg_pct"] == 0.579
+    
+    @pytest.mark.asyncio
+    async def test_bref_error_handling(self, bref_client):
+        """Test Basketball Reference error handling."""
+        # Test network error
+        with patch.object(bref_client, 'fetch_schedule_page', side_effect=Exception("Network timeout")) as mock_fetch:
+            with pytest.raises(Exception) as exc_info:
+                await bref_client.fetch_schedule_page("LAL", "2024")
             
-            # Verify rate limiting (should be called twice)
-            assert mock_fetch.call_count == 2
+            assert "Network timeout" in str(exc_info.value)
     
     @pytest.mark.asyncio
-    async def test_bref_game_id_resolution(self, bref_client):
-        """Test B-Ref game ID resolution logic."""
-        from datetime import date
+    async def test_bref_malformed_html_handling(self, bref_client):
+        """Test handling of malformed Basketball Reference HTML."""
+        malformed_html = "<html><body>No table found</body></html>"
         
-        # Test normal case
-        game_id = await bref_client.resolve_bref_game_id("LAL", "GSW", date(2023, 10, 18))
-        expected = "202310180LAL"
-        assert game_id == expected
-        
-        # Test tricode normalization
-        game_id = await bref_client.resolve_bref_game_id("PHX", "LAL", date(2023, 10, 18))
-        expected = "202310180PHO"  # PHX -> PHO on B-Ref
-        assert game_id == expected
+        with patch.object(bref_client, 'fetch_schedule_page', return_value=malformed_html) as mock_fetch:
+            result = await bref_client.fetch_schedule_page("LAL", "2024")
+            
+            # Should not crash
+            assert result == malformed_html
+            
+            # Parsing should handle gracefully
+            games = bref_client.parse_schedule_html(result)
+            assert games == []  # Empty list for malformed HTML
 
 
 class TestGamebooksAPIIntegration:

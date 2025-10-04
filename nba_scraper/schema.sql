@@ -242,6 +242,255 @@ CREATE TABLE pipeline_state (
     PRIMARY KEY (pipeline_name, game_id, date_key, step_name)
 );
 
+-- TRANCHE 1: NBA API ADVANCED METRICS TABLES
+
+-- Advanced player statistics (per game)
+CREATE TABLE advanced_player_stats (
+    game_id TEXT NOT NULL,
+    player_id TEXT NOT NULL,
+    player_name TEXT NOT NULL,
+    team_id TEXT,
+    team_abbreviation TEXT NOT NULL,
+    
+    -- Core efficiency metrics
+    offensive_rating NUMERIC,
+    defensive_rating NUMERIC,
+    net_rating NUMERIC,
+    
+    -- Advanced percentages
+    assist_percentage NUMERIC,
+    assist_to_turnover NUMERIC,
+    assist_ratio NUMERIC,
+    offensive_rebound_pct NUMERIC,
+    defensive_rebound_pct NUMERIC,
+    rebound_pct NUMERIC,
+    turnover_ratio NUMERIC,
+    effective_fg_pct NUMERIC,
+    true_shooting_pct NUMERIC,
+    usage_pct NUMERIC,
+    
+    -- Pace and impact
+    pace NUMERIC,
+    pie NUMERIC, -- Player Impact Estimate
+    
+    -- Metadata
+    source TEXT NOT NULL,
+    source_url TEXT NOT NULL,
+    ingested_at_utc TIMESTAMPTZ DEFAULT NOW(),
+    
+    PRIMARY KEY (game_id, player_id),
+    FOREIGN KEY (game_id) REFERENCES games (game_id) ON DELETE CASCADE
+);
+
+-- Miscellaneous player statistics (per game)
+CREATE TABLE misc_player_stats (
+    game_id TEXT NOT NULL,
+    player_id TEXT NOT NULL,
+    player_name TEXT NOT NULL,
+    team_id TEXT,
+    team_abbreviation TEXT NOT NULL,
+    
+    -- Plus/minus and impact
+    plus_minus NUMERIC,
+    nba_fantasy_pts NUMERIC,
+    
+    -- Achievement tracking
+    dd2 INTEGER, -- Double-doubles
+    td3 INTEGER, -- Triple-doubles
+    
+    -- Ranking metrics
+    fg_pct_rank INTEGER,
+    ft_pct_rank INTEGER,
+    fg3_pct_rank INTEGER,
+    pts_rank INTEGER,
+    reb_rank INTEGER,
+    ast_rank INTEGER,
+    
+    -- Additional fantasy metrics
+    wnba_fantasy_pts NUMERIC,
+    
+    -- Metadata
+    source TEXT NOT NULL,
+    source_url TEXT NOT NULL,
+    ingested_at_utc TIMESTAMPTZ DEFAULT NOW(),
+    
+    PRIMARY KEY (game_id, player_id),
+    FOREIGN KEY (game_id) REFERENCES games (game_id) ON DELETE CASCADE
+);
+
+-- Usage player statistics (per game)
+CREATE TABLE usage_player_stats (
+    game_id TEXT NOT NULL,
+    player_id TEXT NOT NULL,
+    player_name TEXT NOT NULL,
+    team_id TEXT,
+    team_abbreviation TEXT NOT NULL,
+    
+    -- Core usage metrics
+    usage_pct NUMERIC,
+    
+    -- Percentage breakdowns
+    pct_fgm NUMERIC,  -- % of team's FG made
+    pct_fga NUMERIC,  -- % of team's FG attempted
+    pct_fg3m NUMERIC, -- % of team's 3PT made
+    pct_fg3a NUMERIC, -- % of team's 3PT attempted
+    pct_ftm NUMERIC,  -- % of team's FT made
+    pct_fta NUMERIC,  -- % of team's FT attempted
+    pct_oreb NUMERIC, -- % of team's offensive rebounds
+    pct_dreb NUMERIC, -- % of team's defensive rebounds
+    pct_reb NUMERIC,  -- % of team's total rebounds
+    pct_ast NUMERIC,  -- % of team's assists
+    pct_tov NUMERIC,  -- % of team's turnovers
+    pct_stl NUMERIC,  -- % of team's steals
+    pct_blk NUMERIC,  -- % of team's blocks
+    pct_blka NUMERIC, -- % of team's blocked attempts
+    pct_pf NUMERIC,   -- % of team's personal fouls
+    pct_pfd NUMERIC,  -- % of team's fouls drawn
+    pct_pts NUMERIC,  -- % of team's points
+    
+    -- Metadata
+    source TEXT NOT NULL,
+    source_url TEXT NOT NULL,
+    ingested_at_utc TIMESTAMPTZ DEFAULT NOW(),
+    
+    PRIMARY KEY (game_id, player_id),
+    FOREIGN KEY (game_id) REFERENCES games (game_id) ON DELETE CASCADE
+);
+
+-- Advanced team statistics (per game)
+CREATE TABLE advanced_team_stats (
+    game_id TEXT NOT NULL,
+    team_id TEXT NOT NULL,
+    team_abbreviation TEXT NOT NULL,
+    team_name TEXT,
+    
+    -- Core efficiency metrics
+    offensive_rating NUMERIC,
+    defensive_rating NUMERIC,
+    net_rating NUMERIC,
+    
+    -- Advanced percentages
+    assist_percentage NUMERIC,
+    assist_to_turnover NUMERIC,
+    assist_ratio NUMERIC,
+    offensive_rebound_pct NUMERIC,
+    defensive_rebound_pct NUMERIC,
+    rebound_pct NUMERIC,
+    turnover_ratio NUMERIC,
+    effective_fg_pct NUMERIC,
+    true_shooting_pct NUMERIC,
+    
+    -- Pace and impact
+    pace NUMERIC,
+    pie NUMERIC, -- Team aggregate Player Impact Estimate
+    
+    -- Metadata
+    source TEXT NOT NULL,
+    source_url TEXT NOT NULL,
+    ingested_at_utc TIMESTAMPTZ DEFAULT NOW(),
+    
+    PRIMARY KEY (game_id, team_id),
+    FOREIGN KEY (game_id) REFERENCES games (game_id) ON DELETE CASCADE
+);
+
+-- Team game statistics - comprehensive per-game team metrics
+CREATE TABLE team_game_stats (
+    game_id TEXT NOT NULL,
+    team_id TEXT,
+    team_tricode TEXT NOT NULL,
+    
+    -- Basic box score stats
+    points INTEGER DEFAULT 0,
+    fgm INTEGER DEFAULT 0,
+    fga INTEGER DEFAULT 0,
+    fg_pct NUMERIC,
+    fg3m INTEGER DEFAULT 0,
+    fg3a INTEGER DEFAULT 0,
+    fg3_pct NUMERIC,
+    ftm INTEGER DEFAULT 0,
+    fta INTEGER DEFAULT 0,
+    ft_pct NUMERIC,
+    oreb INTEGER DEFAULT 0,
+    dreb INTEGER DEFAULT 0,
+    reb INTEGER DEFAULT 0,
+    ast INTEGER DEFAULT 0,
+    stl INTEGER DEFAULT 0,
+    blk INTEGER DEFAULT 0,
+    tov INTEGER DEFAULT 0,
+    pf INTEGER DEFAULT 0,
+    
+    -- Possession and pace metrics
+    possessions_estimated NUMERIC,
+    pace NUMERIC,
+    
+    -- Advanced efficiency metrics
+    offensive_rating NUMERIC,
+    defensive_rating NUMERIC,
+    net_rating NUMERIC,
+    effective_fg_pct NUMERIC,
+    true_shooting_pct NUMERIC,
+    
+    -- Four factors
+    efg_pct NUMERIC,
+    tov_rate NUMERIC,
+    orb_pct NUMERIC,
+    ft_rate NUMERIC, -- FT attempts per FG attempt
+    
+    -- League-relative z-scores
+    pace_z_score NUMERIC,
+    offensive_efficiency_z NUMERIC,
+    defensive_efficiency_z NUMERIC,
+    
+    -- Metadata
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW(),
+    
+    PRIMARY KEY (game_id, team_tricode),
+    FOREIGN KEY (game_id) REFERENCES games (game_id) ON DELETE CASCADE
+);
+
+-- Player game statistics - basic box score stats per game
+CREATE TABLE player_game_stats (
+    game_id TEXT NOT NULL,
+    player_id TEXT NOT NULL,
+    player_name TEXT NOT NULL,
+    team_id TEXT,
+    team_abbreviation TEXT NOT NULL,
+    
+    -- Basic box score statistics
+    minutes_played TEXT, -- Format: "MM:SS"
+    points INTEGER DEFAULT 0,
+    field_goals_made INTEGER DEFAULT 0,
+    field_goals_attempted INTEGER DEFAULT 0,
+    field_goal_percentage NUMERIC,
+    three_pointers_made INTEGER DEFAULT 0,
+    three_pointers_attempted INTEGER DEFAULT 0,
+    three_point_percentage NUMERIC,
+    free_throws_made INTEGER DEFAULT 0,
+    free_throws_attempted INTEGER DEFAULT 0,
+    free_throw_percentage NUMERIC,
+    offensive_rebounds INTEGER DEFAULT 0,
+    defensive_rebounds INTEGER DEFAULT 0,
+    total_rebounds INTEGER DEFAULT 0,
+    assists INTEGER DEFAULT 0,
+    steals INTEGER DEFAULT 0,
+    blocks INTEGER DEFAULT 0,
+    turnovers INTEGER DEFAULT 0,
+    personal_fouls INTEGER DEFAULT 0,
+    
+    -- Additional metrics
+    plus_minus INTEGER,
+    starter BOOLEAN DEFAULT FALSE,
+    
+    -- Metadata
+    source TEXT NOT NULL,
+    source_url TEXT NOT NULL,
+    ingested_at_utc TIMESTAMPTZ DEFAULT NOW(),
+    
+    PRIMARY KEY (game_id, player_id),
+    FOREIGN KEY (game_id) REFERENCES games (game_id) ON DELETE CASCADE
+);
+
 -- PERFORMANCE OPTIMIZED INDEXES
 -- Basic single-column indexes for common queries
 CREATE INDEX idx_games_date_local ON games (game_date_local);
@@ -334,6 +583,37 @@ CREATE INDEX idx_pipeline_state_date ON pipeline_state (date_key);
 CREATE INDEX idx_pipeline_state_pipeline_status ON pipeline_state (pipeline_name, status);
 CREATE INDEX idx_pipeline_state_updated ON pipeline_state (updated_at);
 
+-- Advanced Player Stats indexes
+CREATE INDEX idx_advanced_player_stats_player ON advanced_player_stats (player_id);
+CREATE INDEX idx_advanced_player_stats_team ON advanced_player_stats (team_abbreviation);
+CREATE INDEX idx_advanced_player_stats_game_team ON advanced_player_stats (game_id, team_abbreviation);
+CREATE INDEX idx_advanced_player_stats_efficiency ON advanced_player_stats (offensive_rating, defensive_rating);
+CREATE INDEX idx_advanced_player_stats_usage ON advanced_player_stats (usage_pct) WHERE usage_pct IS NOT NULL;
+CREATE INDEX idx_advanced_player_stats_impact ON advanced_player_stats (pie) WHERE pie IS NOT NULL;
+
+-- Misc Player Stats indexes
+CREATE INDEX idx_misc_player_stats_player ON misc_player_stats (player_id);
+CREATE INDEX idx_misc_player_stats_team ON misc_player_stats (team_abbreviation);
+CREATE INDEX idx_misc_player_stats_plus_minus ON misc_player_stats (plus_minus) WHERE plus_minus IS NOT NULL;
+CREATE INDEX idx_misc_player_stats_achievements ON misc_player_stats (dd2, td3) WHERE dd2 > 0 OR td3 > 0;
+
+-- Usage Player Stats indexes
+CREATE INDEX idx_usage_player_stats_player ON usage_player_stats (player_id);
+CREATE INDEX idx_usage_player_stats_team ON usage_player_stats (team_abbreviation);
+CREATE INDEX idx_usage_player_stats_usage_pct ON usage_player_stats (usage_pct) WHERE usage_pct IS NOT NULL;
+CREATE INDEX idx_usage_player_stats_involvement ON usage_player_stats (pct_pts, pct_reb, pct_ast);
+
+-- Advanced Team Stats indexes
+CREATE INDEX idx_advanced_team_stats_team ON advanced_team_stats (team_abbreviation);
+CREATE INDEX idx_advanced_team_stats_efficiency ON advanced_team_stats (offensive_rating, defensive_rating);
+CREATE INDEX idx_advanced_team_stats_pace ON advanced_team_stats (pace) WHERE pace IS NOT NULL;
+
+-- Covering indexes for common queries
+CREATE INDEX idx_advanced_player_stats_covering ON advanced_player_stats (game_id, player_id) 
+    INCLUDE (offensive_rating, defensive_rating, usage_pct, plus_minus);
+CREATE INDEX idx_advanced_team_stats_covering ON advanced_team_stats (game_id, team_id) 
+    INCLUDE (offensive_rating, defensive_rating, net_rating, pace);
+
 -- PARTIAL INDEXES for specific use cases
 CREATE INDEX idx_games_completed ON games (game_date_local, season) WHERE status = 'COMPLETED';
 CREATE INDEX idx_games_in_progress ON games (game_date_utc) WHERE status IN ('IN_PROGRESS', 'LIVE');
@@ -344,12 +624,12 @@ CREATE INDEX idx_injury_out_players ON injury_status (game_id, team_tricode, pla
 -- EXPRESSION INDEXES for computed queries
 CREATE INDEX idx_games_team_participation ON games ((
     CASE 
-        WHEN home_team_tricode = '' OR away_team_tricode = '' THEN 
-            COALESCE(NULLIF(home_team_tricode, ''), 'UNK') || '_' || COALESCE(NULLIF(away_team_tricode, ''), 'UNK')
-        WHEN home_team_tricode < away_team_tricode THEN 
-            home_team_tricode || '_' || away_team_tricode 
+        WHEN COALESCE(home_team_tricode::text, '') = '' OR COALESCE(away_team_tricode::text, '') = '' THEN 
+            COALESCE(NULLIF(home_team_tricode::text, ''), 'UNK') || '_' || COALESCE(NULLIF(away_team_tricode::text, ''), 'UNK')
+        WHEN COALESCE(home_team_tricode::text, '') < COALESCE(away_team_tricode::text, '') THEN 
+            COALESCE(home_team_tricode::text, '') || '_' || COALESCE(away_team_tricode::text, '') 
         ELSE 
-            away_team_tricode || '_' || home_team_tricode 
+            COALESCE(away_team_tricode::text, '') || COALESCE(home_team_tricode::text, '') 
     END
 ));
 
@@ -393,6 +673,17 @@ ALTER TABLE schedule_travel ADD CONSTRAINT fk_schedule_travel_game_id
 
 ALTER TABLE outcomes ADD CONSTRAINT fk_outcomes_game_id 
     FOREIGN KEY (game_id) REFERENCES games (game_id) ON DELETE CASCADE;
+
+-- Comments for advanced metrics tables
+COMMENT ON TABLE advanced_player_stats IS 'Advanced player efficiency metrics from NBA Stats API per game';
+COMMENT ON TABLE misc_player_stats IS 'Miscellaneous player statistics including plus/minus and achievements';
+COMMENT ON TABLE usage_player_stats IS 'Player usage rates and team involvement percentages';
+COMMENT ON TABLE advanced_team_stats IS 'Advanced team efficiency and pace metrics per game';
+
+COMMENT ON COLUMN advanced_player_stats.pie IS 'Player Impact Estimate - NBA proprietary impact metric';
+COMMENT ON COLUMN advanced_player_stats.usage_pct IS 'Percentage of team plays used by player while on court';
+COMMENT ON COLUMN misc_player_stats.plus_minus IS 'Point differential while player was on court';
+COMMENT ON COLUMN usage_player_stats.pct_pts IS 'Percentage of team total points scored by player';
 
 -- Table and column comments for documentation
 COMMENT ON TABLE games IS 'Core game information with scheduling and venue details';

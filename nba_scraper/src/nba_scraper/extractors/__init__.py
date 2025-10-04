@@ -4,6 +4,11 @@ from .nba_stats import (
     extract_games_from_scoreboard,
     extract_pbp_from_response,
     extract_boxscore_lineups,
+    extract_advanced_player_stats,
+    extract_misc_player_stats,
+    extract_usage_player_stats,
+    extract_advanced_team_stats,
+    extract_shot_chart_detail,
 )
 from .bref import (
     extract_game_outcomes,
@@ -20,6 +25,11 @@ __all__ = [
     "extract_games_from_scoreboard",
     "extract_pbp_from_response", 
     "extract_boxscore_lineups",
+    "extract_advanced_player_stats",
+    "extract_misc_player_stats", 
+    "extract_usage_player_stats",
+    "extract_advanced_team_stats",
+    "extract_shot_chart_detail",
     # B-Ref extractors
     "extract_game_outcomes",
     "extract_starting_lineups",

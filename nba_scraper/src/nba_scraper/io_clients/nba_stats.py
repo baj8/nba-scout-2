@@ -8,6 +8,7 @@ import json
 from ..config import get_settings
 from ..http import get
 from ..nba_logging import get_logger
+from ..models.utils import preprocess_nba_stats_data
 
 logger = get_logger(__name__)
 
@@ -36,6 +37,50 @@ class NBAStatsClient:
             'Sec-Fetch-Site': 'same-site',
             'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/87.0.4280.88 Safari/537.36'
         }
+
+    def _preprocess_api_response(self, data: Dict[str, Any]) -> Dict[str, Any]:
+        """Preprocess NBA Stats API response to prevent int/str comparison errors.
+        
+        This is the critical fix for the int/str comparison error. It ensures
+        all data is properly normalized before reaching extractors or models.
+        """
+        try:
+            # Apply comprehensive preprocessing to the entire response
+            processed_data = preprocess_nba_stats_data(data)
+            
+            # Additional preprocessing for nested resultSets structure
+            if 'resultSets' in processed_data:
+                processed_result_sets = []
+                for result_set in processed_data['resultSets']:
+                    processed_result_set = preprocess_nba_stats_data(result_set)
+                    
+                    # Process the rowSet data which contains the actual API values
+                    if 'rowSet' in processed_result_set and isinstance(processed_result_set['rowSet'], list):
+                        processed_rows = []
+                        for row in processed_result_set['rowSet']:
+                            if isinstance(row, list):
+                                # Convert each value in the row to prevent type comparison issues
+                                processed_row = []
+                                for value in row:
+                                    # Convert potentially problematic values to strings
+                                    if isinstance(value, (int, float)) and value is not None:
+                                        # Special handling for certain numeric fields that might be compared as enums
+                                        processed_row.append(str(value))
+                                    else:
+                                        processed_row.append(value)
+                                processed_rows.append(processed_row)
+                            else:
+                                processed_rows.append(row)
+                        processed_result_set['rowSet'] = processed_rows
+                    
+                    processed_result_sets.append(processed_result_set)
+                processed_data['resultSets'] = processed_result_sets
+            
+            return processed_data
+            
+        except Exception as e:
+            logger.warning("Failed to preprocess API response, returning raw data", error=str(e))
+            return data
     
     async def fetch_scoreboard_by_date(self, date_utc: datetime) -> Dict[str, Any]:
         """Fetch scoreboard data for a specific date using direct API access.
@@ -44,7 +89,7 @@ class NBAStatsClient:
             date_utc: Date to fetch games for
             
         Returns:
-            Scoreboard data dictionary
+            Preprocessed scoreboard data dictionary
         """
         # Format date for NBA Stats API (MM/DD/YYYY)
         date_str = date_utc.strftime('%m/%d/%Y')
@@ -62,7 +107,10 @@ class NBAStatsClient:
             logger.info("Fetching NBA Stats scoreboard", date=date_str, url=url)
             
             response = await get(url, headers=self.headers)
-            data = response.json()
+            raw_data = response.json()
+            
+            # CRITICAL: Preprocess the response to prevent int/str comparison errors
+            data = self._preprocess_api_response(raw_data)
             
             # Count games for logging
             games_count = 0
@@ -89,7 +137,7 @@ class NBAStatsClient:
             game_id: NBA Stats game ID
             
         Returns:
-            Boxscore data dictionary
+            Preprocessed boxscore data dictionary
         """
         try:
             params = {
@@ -106,7 +154,10 @@ class NBAStatsClient:
             logger.info("Fetching NBA Stats boxscore", game_id=game_id)
             
             response = await get(url, headers=self.headers)
-            data = response.json()
+            raw_data = response.json()
+            
+            # CRITICAL: Preprocess the response to prevent int/str comparison errors
+            data = self._preprocess_api_response(raw_data)
             
             logger.info("Fetched NBA Stats boxscore", game_id=game_id)
             
@@ -126,7 +177,7 @@ class NBAStatsClient:
             end_period: Ending period (10 = all)
             
         Returns:
-            Play-by-play data dictionary
+            Preprocessed play-by-play data dictionary
         """
         try:
             params = {
@@ -140,7 +191,10 @@ class NBAStatsClient:
             logger.info("Fetching NBA Stats PBP", game_id=game_id)
             
             response = await get(url, headers=self.headers)
-            data = response.json()
+            raw_data = response.json()
+            
+            # CRITICAL: Preprocess the response to prevent int/str comparison errors
+            data = self._preprocess_api_response(raw_data)
             
             # Count events for logging
             events_count = 0
@@ -160,52 +214,90 @@ class NBAStatsClient:
                         game_id=game_id, error=str(e))
             raise
     
-    async def fetch_shotchart(self, team_id: str, game_id: str, season: str = "2023-24") -> Dict[str, Any]:
-        """Fetch shot chart data for a team in a game using direct API access.
+    async def fetch_shotchart_reliable(self, game_id: str, season: str = "2024-25") -> Dict[str, Any]:
+        """Fetch shot chart data using nba_api library for reliability.
         
         Args:
-            team_id: NBA Stats team ID
             game_id: NBA Stats game ID
-            season: Season string (e.g., '2023-24')
+            season: Season string (e.g., '2024-25')
             
         Returns:
-            Shot chart data dictionary
+            Dictionary with shot chart data and metadata
         """
         try:
-            params = {
-                'TeamID': team_id,
-                'PlayerID': '0',  # All players
-                'GameID': game_id,
-                'Season': season,
-                'SeasonType': 'Regular Season',
-                'LeagueID': '00',
-                'ContextMeasure': 'FGA'
+            from nba_api.stats.endpoints import shotchartdetail
+            import pandas as pd
+            import time
+            
+            logger.info("Fetching shot chart using nba_api", game_id=game_id, season=season)
+            
+            # Use the reliable nba_api approach with proper parameters
+            resp = shotchartdetail.ShotChartDetail(
+                team_id=0,                          # 0 = all teams
+                player_id=0,                        # 0 = all players
+                season_nullable=season,
+                season_type_all_star="Regular Season",
+                context_measure_simple="FGA",       # returns all attempts (makes + misses)
+                date_from_nullable="",              # IMPORTANT: use "" not None
+                date_to_nullable="",                # same
+                game_id_nullable=game_id,           # Filter by specific game
+                opponent_team_id=0,
+                period=0,                           # 0 = all periods
+                player_position_nullable="",
+                outcome_nullable="",
+                location_nullable="",
+                month=0,
+                season_segment_nullable="",
+                last_n_games=0,
+                ahead_behind_nullable="",
+                clutch_time_nullable="",
+                rookie_year_nullable="",
+                vs_conference_nullable="",
+                vs_division_nullable="",
+                game_segment_nullable=""
+            )
+            
+            # Sometimes first request 500s - add retry logic
+            try:
+                df = resp.get_data_frames()[0]  # Table "Shot_Chart_Detail"
+            except Exception as e:
+                logger.warning("First shot chart request failed, retrying", game_id=game_id, error=str(e))
+                time.sleep(1)
+                resp = shotchartdetail.ShotChartDetail(
+                    team_id=0, player_id=0, season_nullable=season,
+                    season_type_all_star="Regular Season", context_measure_simple="FGA",
+                    date_from_nullable="", date_to_nullable="", game_id_nullable=game_id,
+                    opponent_team_id=0, period=0, player_position_nullable="",
+                    outcome_nullable="", location_nullable="", month=0,
+                    season_segment_nullable="", last_n_games=0, ahead_behind_nullable="",
+                    clutch_time_nullable="", rookie_year_nullable="", vs_conference_nullable="",
+                    vs_division_nullable="", game_segment_nullable=""
+                )
+                df = resp.get_data_frames()[0]
+            
+            # Validate expected columns are present
+            required_cols = {"LOC_X", "LOC_Y", "SHOT_DISTANCE", "GAME_EVENT_ID", "SHOT_MADE_FLAG"}
+            if not required_cols.issubset(df.columns):
+                missing = required_cols - set(df.columns)
+                logger.warning("Missing shot chart columns", game_id=game_id, missing=list(missing))
+            
+            # Convert DataFrame to our expected format
+            shot_data = {
+                'resultSets': [{
+                    'name': 'Shot_Chart_Detail',
+                    'headers': df.columns.tolist(),
+                    'rowSet': df.values.tolist()
+                }]
             }
             
-            url = f"{self.base_url}/shotchartdetail?" + urlencode(params)
+            logger.info("Successfully fetched shot chart via nba_api", 
+                       game_id=game_id, shots_count=len(df))
             
-            logger.info("Fetching NBA Stats shot chart", 
-                       team_id=team_id, game_id=game_id)
-            
-            response = await get(url, headers=self.headers)
-            data = response.json()
-            
-            # Count shots for logging
-            shots_count = 0
-            if 'resultSets' in data:
-                for result_set in data['resultSets']:
-                    if 'Shot' in result_set.get('name', ''):
-                        shots_count = len(result_set.get('rowSet', []))
-                        break
-            
-            logger.info("Fetched NBA Stats shot chart", 
-                       team_id=team_id, game_id=game_id, shots_count=shots_count)
-            
-            return data
+            return shot_data
             
         except Exception as e:
-            logger.error("Failed to fetch NBA Stats shot chart", 
-                        team_id=team_id, game_id=game_id, error=str(e))
+            logger.error("Failed to fetch shot chart via nba_api", 
+                        game_id=game_id, season=season, error=str(e))
             raise
     
     async def fetch_schedule(self, season: str = "2023-24") -> Dict[str, Any]:
@@ -274,6 +366,188 @@ class NBAStatsClient:
                         team_id=team_id, season=season, error=str(e))
             raise
     
+    async def fetch_boxscore_advanced(self, game_id: str) -> Dict[str, Any]:
+        """Fetch advanced boxscore data including efficiency metrics.
+        
+        Args:
+            game_id: NBA Stats game ID
+            
+        Returns:
+            Preprocessed advanced boxscore data dictionary
+        """
+        try:
+            params = {
+                'GameID': game_id,
+                'StartPeriod': '0',
+                'EndPeriod': '10',
+                'StartRange': '0',
+                'EndRange': '28800',
+                'RangeType': '0'
+            }
+            
+            url = f"{self.base_url}/boxscoreadvancedv2?" + urlencode(params)
+            
+            logger.info("Fetching NBA Stats advanced boxscore", game_id=game_id)
+            
+            response = await get(url, headers=self.headers)
+            raw_data = response.json()
+            
+            # CRITICAL: Preprocess the response to prevent int/str comparison errors
+            data = self._preprocess_api_response(raw_data)
+            
+            logger.info("Fetched NBA Stats advanced boxscore", game_id=game_id)
+            
+            return data
+            
+        except Exception as e:
+            logger.error("Failed to fetch NBA Stats advanced boxscore", 
+                        game_id=game_id, error=str(e))
+            raise
+
+    async def fetch_boxscore_misc(self, game_id: str) -> Dict[str, Any]:
+        """Fetch miscellaneous boxscore stats including plus/minus, usage rate.
+        
+        Args:
+            game_id: NBA Stats game ID
+            
+        Returns:
+            Preprocessed miscellaneous stats data dictionary
+        """
+        try:
+            params = {
+                'GameID': game_id,
+                'StartPeriod': '0',
+                'EndPeriod': '10',
+                'StartRange': '0',
+                'EndRange': '28800',
+                'RangeType': '0'
+            }
+            
+            url = f"{self.base_url}/boxscoremiscv2?" + urlencode(params)
+            
+            logger.info("Fetching NBA Stats misc boxscore", game_id=game_id)
+            
+            response = await get(url, headers=self.headers)
+            raw_data = response.json()
+            
+            # CRITICAL: Preprocess the response to prevent int/str comparison errors
+            data = self._preprocess_api_response(raw_data)
+            
+            logger.info("Fetched NBA Stats misc boxscore", game_id=game_id)
+            
+            return data
+            
+        except Exception as e:
+            logger.error("Failed to fetch NBA Stats misc boxscore", 
+                        game_id=game_id, error=str(e))
+            raise
+
+    async def fetch_boxscore_usage(self, game_id: str) -> Dict[str, Any]:
+        """Fetch usage stats including usage rate and pace impact.
+        
+        Args:
+            game_id: NBA Stats game ID
+            
+        Returns:
+            Preprocessed usage stats data dictionary
+        """
+        try:
+            params = {
+                'GameID': game_id,
+                'StartPeriod': '0',
+                'EndPeriod': '10',
+                'StartRange': '0',
+                'EndRange': '28800',
+                'RangeType': '0'
+            }
+            
+            url = f"{self.base_url}/boxscoreusagev2?" + urlencode(params)
+            
+            logger.info("Fetching NBA Stats usage boxscore", game_id=game_id)
+            
+            response = await get(url, headers=self.headers)
+            raw_data = response.json()
+            
+            # CRITICAL: Preprocess the response to prevent int/str comparison errors
+            data = self._preprocess_api_response(raw_data)
+            
+            logger.info("Fetched NBA Stats usage boxscore", game_id=game_id)
+            
+            return data
+            
+        except Exception as e:
+            logger.error("Failed to fetch NBA Stats usage boxscore", 
+                        game_id=game_id, error=str(e))
+            raise
+
+    async def fetch_team_game_stats(self, team_id: str, season: str = "2023-24") -> Dict[str, Any]:
+        """Fetch team game logs with advanced metrics.
+        
+        Args:
+            team_id: NBA Stats team ID
+            season: Season string (e.g., '2023-24')
+            
+        Returns:
+            Team game stats data dictionary
+        """
+        try:
+            params = {
+                'TeamID': team_id,
+                'Season': season,
+                'SeasonType': 'Regular Season',
+                'LeagueID': '00'
+            }
+            
+            url = f"{self.base_url}/teamgamelogs?" + urlencode(params)
+            
+            logger.info("Fetching NBA Stats team game stats", team_id=team_id, season=season)
+            
+            response = await get(url, headers=self.headers)
+            data = response.json()
+            
+            logger.info("Fetched NBA Stats team game stats", team_id=team_id, season=season)
+            
+            return data
+            
+        except Exception as e:
+            logger.error("Failed to fetch NBA Stats team game stats", 
+                        team_id=team_id, season=season, error=str(e))
+            raise
+
+    async def fetch_player_game_stats(self, player_id: str, season: str = "2023-24") -> Dict[str, Any]:
+        """Fetch player game logs with advanced metrics.
+        
+        Args:
+            player_id: NBA Stats player ID
+            season: Season string (e.g., '2023-24')
+            
+        Returns:
+            Player game stats data dictionary
+        """
+        try:
+            params = {
+                'PlayerID': player_id,
+                'Season': season,
+                'SeasonType': 'Regular Season',
+                'LeagueID': '00'
+            }
+            
+            url = f"{self.base_url}/playergamelogs?" + urlencode(params)
+            
+            logger.info("Fetching NBA Stats player game stats", player_id=player_id, season=season)
+            
+            response = await get(url, headers=self.headers)
+            data = response.json()
+            
+            logger.info("Fetched NBA Stats player game stats", player_id=player_id, season=season)
+            
+            return data
+            
+        except Exception as e:
+            logger.error("Failed to fetch NBA Stats player game stats", 
+                        player_id=player_id, season=season, error=str(e))
+            raise
+
     def parse_scoreboard_games(self, scoreboard_data: Dict[str, Any]) -> List[Dict[str, Any]]:
         """Parse games from scoreboard response.
         
@@ -394,7 +668,10 @@ class NBAStatsClient:
         """Get list of available API endpoints for debugging."""
         return [
             'scoreboardv2',
-            'boxscoretraditionalv2', 
+            'boxscoretraditionalv2',
+            'boxscoreadvancedv2',
+            'boxscoremiscv2', 
+            'boxscoreusagev2',
             'playbyplayv2',
             'shotchartdetail',
             'leaguegamefinder',

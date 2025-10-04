@@ -22,7 +22,35 @@ class BRefClient:
         """Initialize Basketball Reference client."""
         self.settings = get_settings()
         self.base_url = self.settings.bref_base_url
-    
+
+    def _safe_preprocess_data(self, data: Any) -> Any:
+        """Safely preprocess data to prevent int/str comparison errors.
+        
+        This ensures all data from Basketball Reference HTML parsing
+        is properly normalized to prevent comparison errors.
+        """
+        try:
+            if isinstance(data, dict):
+                processed = {}
+                for key, value in data.items():
+                    # Convert numeric values that might be used in comparisons to strings
+                    if isinstance(value, (int, float)) and value is not None:
+                        processed[key] = str(value)
+                    elif isinstance(value, dict):
+                        processed[key] = self._safe_preprocess_data(value)
+                    elif isinstance(value, list):
+                        processed[key] = [self._safe_preprocess_data(item) for item in value]
+                    else:
+                        processed[key] = value
+                return processed
+            elif isinstance(data, list):
+                return [self._safe_preprocess_data(item) for item in data]
+            else:
+                return data
+        except Exception as e:
+            logger.warning("Failed to preprocess B-Ref data, returning raw data", error=str(e))
+            return data
+
     async def fetch_bref_box(self, bref_game_id: str) -> str:
         """Fetch Basketball Reference boxscore HTML.
         
@@ -161,7 +189,7 @@ class BRefClient:
             scores['ot_periods'] = ot_periods
             
             logger.debug("Parsed boxscore scores", scores=scores)
-            return scores
+            return self._safe_preprocess_data(scores)
             
         except Exception as e:
             logger.warning("Failed to parse boxscore scores", error=str(e))
@@ -219,7 +247,7 @@ class BRefClient:
                         home_count=len(lineups['home']), 
                         away_count=len(lineups['away']))
             
-            return lineups
+            return self._safe_preprocess_data(lineups)
             
         except Exception as e:
             logger.warning("Failed to parse starting lineups", error=str(e))
@@ -262,7 +290,7 @@ class BRefClient:
                     })
             
             logger.debug("Parsed injury notes", count=len(injuries))
-            return injuries
+            return self._safe_preprocess_data(injuries)
             
         except Exception as e:
             logger.warning("Failed to parse injury notes", error=str(e))

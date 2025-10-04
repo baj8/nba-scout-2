@@ -172,14 +172,14 @@ class GamePipeline:
         try:
             await self.rate_limiter.acquire('bref')
             
-            # Use actual Basketball Reference client methods
             updates = {}
+            source_url = f"https://www.basketball-reference.com/boxscores/{game_id}.html"
             
             # Extract game outcomes
             try:
                 outcomes_html = await self.bref_client.fetch_bref_box(game_id)
                 if outcomes_html:
-                    outcomes = extract_game_outcomes(outcomes_html)
+                    outcomes = extract_game_outcomes(outcomes_html, game_id, source_url)
                     if outcomes:
                         updates['games'] = await self.game_loader.upsert_games(outcomes)
             except Exception as e:
@@ -189,7 +189,7 @@ class GamePipeline:
             try:
                 lineups_html = await self.bref_client.fetch_bref_box(game_id)
                 if lineups_html:
-                    lineups = extract_starting_lineups(lineups_html)
+                    lineups = extract_starting_lineups(lineups_html, game_id, source_url)
                     if lineups:
                         updates['starting_lineups'] = await self.lineup_loader.upsert_lineups(lineups)
             except Exception as e:
@@ -199,7 +199,7 @@ class GamePipeline:
             try:
                 injury_html = await self.bref_client.fetch_bref_box(game_id)
                 if injury_html:
-                    injuries = extract_injury_notes(injury_html)
+                    injuries = extract_injury_notes(injury_html, game_id, source_url)
                     if injuries:
                         updates['injury_status'] = await self.lineup_loader.upsert_injuries(injuries)
             except Exception as e:
@@ -222,12 +222,13 @@ class GamePipeline:
             await self.rate_limiter.acquire('nba_stats')
             
             updates = {}
+            source_url = f"https://stats.nba.com/game/{game_id}"
             
             # Extract play-by-play data
             try:
                 pbp_response = await self.nba_stats_client.fetch_pbp(game_id)
                 if pbp_response:
-                    pbp_events = extract_pbp_from_response(pbp_response)
+                    pbp_events = extract_pbp_from_response(pbp_response, game_id, source_url)
                     if pbp_events:
                         updates['pbp_events'] = await self.pbp_loader.upsert_events(pbp_events)
             except Exception as e:
@@ -237,7 +238,7 @@ class GamePipeline:
             try:
                 boxscore_response = await self.nba_stats_client.fetch_boxscore(game_id)
                 if boxscore_response:
-                    lineups = extract_boxscore_lineups(boxscore_response)
+                    lineups = extract_boxscore_lineups(boxscore_response, game_id, source_url)
                     if lineups:
                         updates['starting_lineups'] = await self.lineup_loader.upsert_lineups(lineups)
             except Exception as e:

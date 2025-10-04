@@ -1,7 +1,8 @@
 """Game row Pydantic model with validators."""
 
 import re
-from datetime import date, datetime
+from datetime import datetime as dt, date
+import datetime as pydt
 from typing import Any, Dict, Optional, ClassVar
 
 import yaml
@@ -18,7 +19,7 @@ class GameRow(BaseModel):
     game_id: str = Field(..., description="Unique game identifier")
     bref_game_id: Optional[str] = Field(None, description="Basketball Reference game ID")
     season: str = Field(..., description="Season (e.g., '2023-24')")
-    game_date_utc: datetime = Field(..., description="Game date/time in UTC")
+    game_date_utc: dt = Field(..., description="Game date/time in UTC")
     game_date_local: date = Field(..., description="Game date in local arena timezone")
     arena_tz: str = Field(..., description="Arena timezone (IANA)")
     home_team_tricode: str = Field(..., description="Home team tricode")
@@ -118,11 +119,19 @@ class GameRow(BaseModel):
         
         return status_map.get(status_upper, 'SCHEDULED')
 
-    @field_validator('home_team_tricode', 'away_team_tricode')
+    @field_validator('home_team_tricode', 'away_team_tricode', mode='before')
     @classmethod
-    def validate_tricode(cls, v: str) -> str:
-        """Validate and normalize team tricode."""
-        return cls._normalize_tricode(v)
+    def validate_tricode(cls, v) -> str:
+        """Validate and normalize team tricode, handling both strings and integer team IDs."""
+        # CRITICAL: Handle the case where NBA Stats API sends integer team IDs instead of tricodes
+        if isinstance(v, int):
+            # Convert integer team ID to tricode
+            return cls._team_id_to_tricode(str(v))
+        elif v is None:
+            return 'UNK'
+        else:
+            # Convert to string and normalize
+            return cls._normalize_tricode(str(v))
     
     @field_validator('arena_tz')
     @classmethod
@@ -298,14 +307,14 @@ class GameRow(BaseModel):
         # Parse game date and determine timezone
         if game_date_est:
             try:
-                game_date_utc = datetime.fromisoformat(game_date_est.replace('Z', '+00:00'))
+                game_date_utc = dt.fromisoformat(game_date_est.replace('Z', '+00:00'))
             except ValueError:
                 # Try alternative date parsing
                 from dateutil.parser import parse
                 game_date_utc = parse(game_date_est)
         else:
             # Fallback to current time if no date provided
-            game_date_utc = datetime.utcnow()
+            game_date_utc = dt.utcnow()
         
         # Get arena timezone
         arena_tz = cls._get_arena_timezone(home_team) if home_team else 'America/New_York'
