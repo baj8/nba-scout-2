@@ -336,6 +336,38 @@ nba-scraper validate --since 2024-01-01 --verbose
 
 ## Development
 
+### Dev Quickstart
+
+```bash
+python -m venv .venv && source .venv/bin/activate
+pip install -U pip
+pip install -e .[dev]   # Install with development dependencies
+ruff check .
+mypy src
+pytest -q --disable-warnings -W error
+```
+
+### Validation Rules
+
+**Game ID Validation:**
+- Must match `^0022\d{6}$` format (exactly 10 characters, numeric, starts with "0022")
+- Examples: ✅ `"0022301234"` ❌ `"0012301234"` (wrong prefix) ❌ `"002230123"` (too short)
+- Raises `ValueError` with descriptive message for invalid formats
+
+**Season Validation:**
+- Accepts `YYYY-YY` format (e.g., "2024-25")
+- For malformed seasons: logs warning `"season format invalid: {value} - expected YYYY-YY format"`
+- Falls back to `derive_season_smart()` for automatic season derivation from game_id/date
+- Never fails processing - always produces a valid season string
+
+**Pipeline Error Handling:**
+- Foundation pipeline continues PBP and lineup processing even when game validation fails
+- Aggregates all errors in `result["errors"]` list rather than failing fast
+- Preserves API responses for reuse across processing steps
+- Example: If game validation fails but PBP succeeds, `result["game_processed"] = False` but `result["pbp_events_processed"] > 0`
+
+## Dev quickstart
+
 ### Project Structure
 
 ```
