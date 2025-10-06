@@ -1,7 +1,7 @@
 """Pipeline for daily incremental NBA data ingestion."""
 
 import asyncio
-from datetime import datetime, date, timedelta
+from datetime import datetime, date, timedelta, UTC
 from typing import List, Optional, Dict, Any
 from dataclasses import dataclass
 
@@ -70,7 +70,7 @@ class DailyPipeline:
         Returns:
             DailyPipelineResult with execution details
         """
-        start_time = datetime.utcnow()
+        start_time = datetime.now(UTC)
         
         result = DailyPipelineResult(
             success=False,
@@ -90,7 +90,7 @@ class DailyPipeline:
             if not games:
                 logger.info("No games found for date", target_date=target_date)
                 result.success = True
-                result.duration_seconds = (datetime.utcnow() - start_time).total_seconds()
+                result.duration_seconds = (datetime.now(UTC) - start_time).total_seconds()
                 return result
             
             logger.info("Found games for processing", target_date=target_date, game_count=len(games))
@@ -124,7 +124,7 @@ class DailyPipeline:
                     result.games_failed += 1
             
             result.success = result.games_processed > 0 or len(games) == 0
-            result.duration_seconds = (datetime.utcnow() - start_time).total_seconds()
+            result.duration_seconds = (datetime.now(UTC) - start_time).total_seconds()
             
             logger.info("Daily ingestion completed",
                        target_date=target_date,
@@ -134,7 +134,7 @@ class DailyPipeline:
             
         except Exception as e:
             result.error = str(e)
-            result.duration_seconds = (datetime.utcnow() - start_time).total_seconds()
+            result.duration_seconds = (datetime.now(UTC) - start_time).total_seconds()
             logger.error("Daily ingestion failed", target_date=target_date, error=str(e))
         
         return result
@@ -196,7 +196,7 @@ class DailyPipeline:
             DailyPipelineResult for the single game
         """
         game_id = game['game_id']
-        start_time = datetime.utcnow()
+        start_time = datetime.now(UTC)
         
         result = DailyPipelineResult(
             success=False,
@@ -224,12 +224,12 @@ class DailyPipeline:
                 result.games_failed = 1
                 result.error = game_result.error
                 
-            result.duration_seconds = (datetime.utcnow() - start_time).total_seconds()
+            result.duration_seconds = (datetime.now(UTC) - start_time).total_seconds()
             
         except Exception as e:
             result.error = str(e)
             result.games_failed = 1
-            result.duration_seconds = (datetime.utcnow() - start_time).total_seconds()
+            result.duration_seconds = (datetime.now(UTC) - start_time).total_seconds()
             logger.error("Failed to process daily game", game_id=game_id, error=str(e))
         
         return result
@@ -250,7 +250,7 @@ class DailyPipeline:
         Returns:
             DailyPipelineResult with aggregated results
         """
-        start_time = datetime.utcnow()
+        start_time = datetime.now(UTC)
         end_date = date.today()
         start_date = end_date - timedelta(days=days_back)
         
@@ -286,7 +286,7 @@ class DailyPipeline:
                 current_date += timedelta(days=1)
             
             result.success = result.games_processed > 0
-            result.duration_seconds = (datetime.utcnow() - start_time).total_seconds()
+            result.duration_seconds = (datetime.now(UTC) - start_time).total_seconds()
             
             logger.info("Recent games processing completed",
                        start_date=start_date,
@@ -297,7 +297,7 @@ class DailyPipeline:
             
         except Exception as e:
             result.error = str(e)
-            result.duration_seconds = (datetime.utcnow() - start_time).total_seconds()
+            result.duration_seconds = (datetime.now(UTC) - start_time).total_seconds()
             logger.error("Recent games processing failed", error=str(e))
         
         return result

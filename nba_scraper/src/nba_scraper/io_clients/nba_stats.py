@@ -548,6 +548,48 @@ class NBAStatsClient:
                         player_id=player_id, season=season, error=str(e))
             raise
 
+    async def boxscore_summary(self, game_id: str) -> dict:
+        """Fetch BoxScoreSummaryV2 data for a game.
+        
+        Args:
+            game_id: NBA game ID (e.g., "0022300001")
+            
+        Returns:
+            BoxScoreSummaryV2 API response containing GameSummary result set
+        """
+        try:
+            params = {
+                'GameID': game_id,
+                'Season': '2024-25',  # Default season, may need to be dynamic
+                'SeasonType': 'Regular Season'
+            }
+            
+            url = f"{self.base_url}/boxscoresummaryv2?" + urlencode(params)
+            
+            logger.info("Fetching NBA Stats boxscore summary", game_id=game_id)
+            
+            response = await get(url, headers=self.headers)
+            raw_data = response.json()
+            
+            # CRITICAL: Preprocess the response to prevent int/str comparison errors
+            data = self._preprocess_api_response(raw_data)
+            
+            # Log summary of response structure for debugging
+            if data and "resultSets" in data:
+                result_set_names = [rs.get("name", "unknown") for rs in data["resultSets"]]
+                logger.debug("BoxScoreSummary result sets", 
+                            game_id=game_id, 
+                            result_sets=result_set_names)
+            
+            logger.info("Fetched NBA Stats boxscore summary", game_id=game_id)
+            
+            return data
+            
+        except Exception as e:
+            logger.error("Failed to fetch NBA Stats boxscore summary", 
+                        game_id=game_id, error=str(e))
+            raise
+
     def parse_scoreboard_games(self, scoreboard_data: Dict[str, Any]) -> List[Dict[str, Any]]:
         """Parse games from scoreboard response.
         

@@ -1,7 +1,7 @@
 """Game row Pydantic model with validators."""
 
 import re
-from datetime import datetime as dt, date
+from datetime import datetime as dt, date, UTC
 import datetime as pydt
 from typing import Any, Dict, Optional, ClassVar
 
@@ -314,7 +314,7 @@ class GameRow(BaseModel):
                 game_date_utc = parse(game_date_est)
         else:
             # Fallback to current time if no date provided
-            game_date_utc = dt.utcnow()
+            game_date_utc = dt.now(UTC)
         
         # Get arena timezone
         arena_tz = cls._get_arena_timezone(home_team) if home_team else 'America/New_York'

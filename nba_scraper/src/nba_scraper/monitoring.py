@@ -3,7 +3,7 @@
 import asyncio
 import json
 import time
-from datetime import datetime
+from datetime import datetime, UTC
 from typing import Dict, Any, Optional
 from urllib.parse import parse_qs, urlparse
 
@@ -114,14 +114,14 @@ class MonitoringServer:
             if is_ready:
                 response = {
                     "status": "ready",
-                    "timestamp": datetime.utcnow().isoformat(),
+                    "timestamp": datetime.now(UTC).isoformat(),
                     "message": "Application is ready to serve traffic"
                 }
                 await self._send_response(writer, 200, json.dumps(response), 'application/json')
             else:
                 response = {
                     "status": "not_ready",
-                    "timestamp": datetime.utcnow().isoformat(),
+                    "timestamp": datetime.now(UTC).isoformat(),
                     "message": "Database connection not available"
                 }
                 await self._send_response(writer, 503, json.dumps(response), 'application/json')
@@ -134,7 +134,7 @@ class MonitoringServer:
         # Simple liveness check - if we can respond, we're alive
         response = {
             "status": "alive",
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": datetime.now(UTC).isoformat(),
             "uptime_seconds": time.time() - self._start_time if hasattr(self, '_start_time') else 0
         }
         await self._send_response(writer, 200, json.dumps(response), 'application/json')
@@ -146,7 +146,7 @@ class MonitoringServer:
             
             # Add timestamp and metadata
             metrics_response = {
-                "timestamp": datetime.utcnow().isoformat(),
+                "timestamp": datetime.now(UTC).isoformat(),
                 "metrics": all_metrics,
                 "metadata": {
                     "environment": self.settings.environment.value,
@@ -169,7 +169,7 @@ class MonitoringServer:
             
             if metric_type in all_metrics:
                 response = {
-                    "timestamp": datetime.utcnow().isoformat(),
+                    "timestamp": datetime.now(UTC).isoformat(),
                     "metric_type": metric_type,
                     "data": all_metrics[metric_type]
                 }
@@ -186,7 +186,7 @@ class MonitoringServer:
         response = {
             "error": "Not Found",
             "message": "Available endpoints: /health, /health/ready, /health/live, /metrics",
-            "timestamp": datetime.utcnow().isoformat()
+            "timestamp": datetime.now(UTC).isoformat()
         }
         await self._send_response(writer, 404, json.dumps(response), 'application/json')
     
@@ -195,7 +195,7 @@ class MonitoringServer:
         response = {
             "error": "Internal Server Error",
             "message": error_message,
-            "timestamp": datetime.utcnow().isoformat()
+            "timestamp": datetime.now(UTC).isoformat()
         }
         await self._send_response(writer, 500, json.dumps(response), 'application/json')
     
@@ -235,7 +235,7 @@ class PrometheusMetricsExporter:
         prometheus_lines = []
         
         # Add metadata
-        prometheus_lines.append(f"# NBA Scraper Metrics - {datetime.utcnow().isoformat()}")
+        prometheus_lines.append(f"# NBA Scraper Metrics - {datetime.now(UTC).isoformat()}")
         prometheus_lines.append(f"# Environment: {self.settings.environment.value}")
         prometheus_lines.append("")
         
@@ -328,13 +328,13 @@ def get_health_status() -> Dict[str, Any]:
         return {
             "status": "unknown",
             "message": "Use async health_checker.run_all_checks() for full status",
-            "timestamp": datetime.utcnow().isoformat()
+            "timestamp": datetime.now(UTC).isoformat()
         }
     except Exception as e:
         return {
             "status": "error",
             "message": f"Health check failed: {str(e)}",
-            "timestamp": datetime.utcnow().isoformat()
+            "timestamp": datetime.now(UTC).isoformat()
         }
 
 def get_metrics_summary() -> Dict[str, Any]:
@@ -347,7 +347,7 @@ def get_metrics_summary() -> Dict[str, Any]:
             "gauges_count": len(all_metrics.get('gauges', {})),
             "histograms_count": len(all_metrics.get('histograms', {})),
             "timers_count": len(all_metrics.get('timers', {})),
-            "timestamp": datetime.utcnow().isoformat()
+            "timestamp": datetime.now(UTC).isoformat()
         }
         
         # Add some key metrics if available
@@ -360,5 +360,5 @@ def get_metrics_summary() -> Dict[str, Any]:
     except Exception as e:
         return {
             "error": f"Failed to get metrics summary: {str(e)}",
-            "timestamp": datetime.utcnow().isoformat()
+            "timestamp": datetime.now(UTC).isoformat()
         }

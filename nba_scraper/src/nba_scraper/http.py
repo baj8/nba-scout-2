@@ -17,6 +17,16 @@ from .nba_logging import get_logger
 
 logger = get_logger(__name__)
 
+# Lazy import to avoid circular dependency
+def __getattr__(name: str):
+    """Lazy import for NBAStatsClient to avoid circular imports."""
+    if name == "NBAStatsClient":
+        from .io_clients.nba_stats import NBAStatsClient
+        return NBAStatsClient
+    raise AttributeError(f"module '{__name__}' has no attribute '{name}'")
+
+# Export functions and classes at module level
+__all__ = ["NBAStatsClient", "get", "post", "download_file", "HTTPSession", "get_client", "close_client"]
 
 # Global HTTP client instance
 _client: Optional[httpx.AsyncClient] = None

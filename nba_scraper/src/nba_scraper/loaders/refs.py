@@ -1,11 +1,12 @@
 """Referee data loader with idempotent upserts."""
 
-from datetime import datetime
+from datetime import datetime, UTC
 from typing import List
 
 from ..models import RefAssignmentRow, RefAlternateRow
 from ..db import get_connection
 from ..nba_logging import get_logger
+from ..utils.db import maybe_transaction
 
 logger = get_logger(__name__)
 
@@ -29,7 +30,7 @@ class RefLoader:
         updated_count = 0
         
         try:
-            async with conn.transaction():
+            async with maybe_transaction(conn):
                 for assignment in assignments:
                     query = """
                     INSERT INTO ref_assignments (
@@ -65,7 +66,7 @@ class RefLoader:
                         assignment.position,
                         assignment.source,
                         assignment.source_url,
-                        datetime.utcnow(),
+                        datetime.now(UTC),
                     )
                     
                     if result.startswith('UPDATE'):
@@ -95,7 +96,7 @@ class RefLoader:
         updated_count = 0
         
         try:
-            async with conn.transaction():
+            async with maybe_transaction(conn):
                 for alternate in alternates:
                     query = """
                     INSERT INTO ref_alternates (
@@ -121,7 +122,7 @@ class RefLoader:
                         alternate.referee_display_name,
                         alternate.source,
                         alternate.source_url,
-                        datetime.utcnow(),
+                        datetime.now(UTC),
                     )
                     
                     if result.startswith('UPDATE'):

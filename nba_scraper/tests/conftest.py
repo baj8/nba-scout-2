@@ -14,13 +14,14 @@ import pytest
 import asyncpg
 from nba_scraper.db import get_connection
 from nba_scraper.io_clients.nba_stats import NBAStatsClient
+from nba_scraper.utils.db import maybe_transaction
 
 
 @pytest.fixture
 async def db():
     """Database connection fixture with transaction rollback."""
     conn = await get_connection()
-    async with conn.transaction():
+    async with maybe_transaction(conn):
         yield conn
         # Transaction is automatically rolled back after test
 

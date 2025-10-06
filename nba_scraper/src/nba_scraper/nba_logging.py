@@ -7,7 +7,7 @@ import uuid
 from contextvars import ContextVar
 from functools import wraps
 from typing import Any, Dict, Optional, Callable, Union
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, UTC
 from collections import defaultdict, deque
 import asyncio
 import threading
@@ -83,7 +83,7 @@ class AlertManager:
         self.settings = get_settings()
         self._alert_cooldowns: Dict[str, datetime] = {}
         self._error_counts: Dict[str, int] = defaultdict(int)
-        self._last_reset = datetime.utcnow()
+        self._last_reset = datetime.now(UTC)
         
     async def send_alert(self, 
                         alert_type: str, 
@@ -95,7 +95,7 @@ class AlertManager:
         cooldown_key = f"{alert_type}:{severity}"
         cooldown_period = timedelta(minutes=15 if severity == "warning" else 5)
         
-        now = datetime.utcnow()
+        now = datetime.now(UTC)
         if cooldown_key in self._alert_cooldowns:
             if now - self._alert_cooldowns[cooldown_key] < cooldown_period:
                 return  # Skip alert due to cooldown
@@ -137,7 +137,7 @@ class AlertManager:
                     "fields": [
                         {"title": "Severity", "value": severity.upper(), "short": True},
                         {"title": "Environment", "value": self.settings.environment.value, "short": True},
-                        {"title": "Timestamp", "value": datetime.utcnow().isoformat(), "short": True}
+                        {"title": "Timestamp", "value": datetime.now(UTC).isoformat(), "short": True}
                     ]
                 }]
             }
@@ -203,7 +203,7 @@ class AlertManager:
     
     def track_error(self, error_type: str):
         """Track error occurrence for threshold monitoring."""
-        now = datetime.utcnow()
+        now = datetime.now(UTC)
         
         # Reset counters every hour
         if now - self._last_reset > timedelta(hours=1):
@@ -255,7 +255,7 @@ class HealthChecker:
                     "healthy": result.get("healthy", True),
                     "message": result.get("message", "OK"),
                     "duration_ms": round(duration * 1000, 2),
-                    "timestamp": datetime.utcnow().isoformat()
+                    "timestamp": datetime.now(UTC).isoformat()
                 }
                 
                 if not check_result["healthy"]:
@@ -269,7 +269,7 @@ class HealthChecker:
                     "healthy": False,
                     "message": f"Health check failed: {str(e)}",
                     "duration_ms": 0,
-                    "timestamp": datetime.utcnow().isoformat()
+                    "timestamp": datetime.now(UTC).isoformat()
                 }
                 results[name] = check_result
                 self._last_check_results[name] = check_result
@@ -277,7 +277,7 @@ class HealthChecker:
         
         return {
             "status": "healthy" if overall_healthy else "unhealthy",
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": datetime.now(UTC).isoformat(),
             "checks": results
         }
 

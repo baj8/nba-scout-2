@@ -1,7 +1,5 @@
-"""Pipeline orchestration modules for NBA data ingestion."""
+"""NBA data processing pipelines."""
 
-from .nba_stats_pipeline import NBAStatsPipeline
+from .backfill import BackfillOrchestrator
 
-__all__ = [
-    'NBAStatsPipeline'
-]
+__all__ = ['BackfillOrchestrator']

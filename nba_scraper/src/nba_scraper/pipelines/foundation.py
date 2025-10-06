@@ -1,12 +1,14 @@
 """Refactored foundation pipeline with hardened preprocessing and clock handling."""
 
 import asyncio
+from contextlib import asynccontextmanager
 from typing import Optional
 import asyncpg
 
 from ..http import NBAStatsClient
 from ..db import get_connection
 from ..nba_logging import get_logger
+from ..utils.db import maybe_transaction
 
 # Extractors - shape raw API responses to dicts/lists
 from ..extractors.boxscore import extract_game_from_boxscore
@@ -70,12 +72,13 @@ class FoundationPipeline:
             conn = await get_connection()
             
             # Start transaction with deferred constraints
-            async with conn.transaction():
+            async with maybe_transaction(conn):
                 await conn.execute('SET CONSTRAINTS ALL DEFERRED')
                 
                 self.logger.info(f"🏀 Processing game {game_id} through foundation pipeline")
                 
                 # Step 1: Process game metadata from boxscore
+                boxscore_resp = None
                 try:
                     boxscore_resp = await self.client.get_boxscore(game_id)
                     
@@ -84,6 +87,7 @@ class FoundationPipeline:
                     game_model = transform_game(game_meta)
                     await upsert_game(conn, game_model)
                     
+                    # Set game_processed to True after successful upsert
                     results['game_processed'] = True
                     self.logger.info(f"✅ Game metadata processed: {game_model.season} {game_model.game_date}")
                     
@@ -91,8 +95,10 @@ class FoundationPipeline:
                     error = f"Game metadata processing failed: {e}"
                     results['errors'].append(error)
                     self.logger.error(error, game_id=game_id, exc_info=True)
+                    # Keep game_processed=False but continue with PBP/lineups if we have boxscore data
                 
-                # Step 2: Process PBP events (with clock handling)
+                # Step 2: Process PBP events (with clock handling) - separate try/except
+                # Continue even if game metadata processing failed, as long as we have the API response
                 if not skip_pbp:
                     try:
                         pbp_resp = await self.client.get_pbp(game_id)
@@ -114,9 +120,11 @@ class FoundationPipeline:
                         error = f"PBP processing failed: {e}"
                         results['errors'].append(error)
                         self.logger.error(error, game_id=game_id, exc_info=True)
+                        # Note: Do NOT reset game_processed to False
                 
-                # Step 3: Process lineup stints
-                if not skip_lineups:
+                # Step 3: Process lineup stints - separate try/except
+                # Continue even if game metadata processing failed, as long as we have boxscore data
+                if not skip_lineups and boxscore_resp is not None:
                     try:
                         # Reuse boxscore response for lineup extraction
                         raw_lineups = extract_lineups_from_response(boxscore_resp)
@@ -130,6 +138,7 @@ class FoundationPipeline:
                         error = f"Lineup processing failed: {e}"
                         results['errors'].append(error)
                         self.logger.error(error, game_id=game_id, exc_info=True)
+                        # Note: Do NOT reset game_processed to False
                 
                 # Transaction will auto-commit if we reach here
                 self.logger.info(f"🎯 Foundation pipeline completed for {game_id}")

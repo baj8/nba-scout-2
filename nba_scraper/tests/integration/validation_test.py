@@ -1,7 +1,7 @@
 """Integration tests for data quality validation and FK checks."""
 
 import pytest
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, UTC
 from unittest.mock import AsyncMock, patch
 
 from nba_scraper.validation import DataQualityValidator, ValidationResult
@@ -118,7 +118,7 @@ class TestDataQualityValidation:
         mock_conn.fetchrow.return_value = {'total_count': 100, 'invalid_count': 0}
         
         with patch('nba_scraper.validation.get_connection', return_value=mock_conn):
-            cutoff_time = datetime.utcnow() - timedelta(hours=24)
+            cutoff_time = datetime.now(UTC) - timedelta(hours=24)
             results = await validator._validate_core_foreign_keys(cutoff_time)
             
             assert len(results) == 1
@@ -140,7 +140,7 @@ class TestDataQualityValidation:
         ]
         
         with patch('nba_scraper.validation.get_connection', return_value=mock_conn):
-            cutoff_time = datetime.utcnow() - timedelta(hours=24)
+            cutoff_time = datetime.now(UTC) - timedelta(hours=24)
             results = await validator._validate_core_foreign_keys(cutoff_time)
             
             assert len(results) == 1
@@ -177,7 +177,7 @@ class TestDataQualityValidation:
         ]
         
         with patch('nba_scraper.validation.get_connection', return_value=mock_conn):
-            cutoff_time = datetime.utcnow() - timedelta(hours=24)
+            cutoff_time = datetime.now(UTC) - timedelta(hours=24)
             results = await validator._detect_orphaned_records(cutoff_time)
             
             assert len(results) == 1
@@ -201,7 +201,7 @@ class TestDataQualityValidation:
         ]
         
         with patch('nba_scraper.validation.get_connection', return_value=mock_conn):
-            cutoff_time = datetime.utcnow() - timedelta(hours=24)
+            cutoff_time = datetime.now(UTC) - timedelta(hours=24)
             results = await validator._validate_uniqueness_constraints(cutoff_time)
             
             assert len(results) == 2
@@ -241,7 +241,7 @@ class TestDataQualityValidation:
         ]
         
         with patch('nba_scraper.validation.get_connection', return_value=mock_conn):
-            cutoff_time = datetime.utcnow() - timedelta(hours=24)
+            cutoff_time = datetime.now(UTC) - timedelta(hours=24)
             results = await validator._validate_cross_table_consistency(cutoff_time)
             
             assert len(results) == 2
@@ -300,7 +300,7 @@ class TestDataQualityValidation:
         }
         
         with patch('nba_scraper.validation.get_connection', return_value=mock_conn):
-            cutoff_time = datetime.utcnow() - timedelta(hours=24)
+            cutoff_time = datetime.now(UTC) - timedelta(hours=24)
             results = await validator._validate_pbp_monotonicity(cutoff_time)
             
             # Should have 5 validation results (gaps, overlaps, clock, periods, completeness)
@@ -360,7 +360,7 @@ class TestDataQualityValidation:
         }
         
         with patch('nba_scraper.validation.get_connection', return_value=mock_conn):
-            cutoff_time = datetime.utcnow() - timedelta(hours=24)
+            cutoff_time = datetime.now(UTC) - timedelta(hours=24)
             results = await validator._validate_pbp_monotonicity(cutoff_time)
             
             # Check overlap detection result
@@ -406,7 +406,7 @@ class TestDataQualityValidation:
         }
         
         with patch('nba_scraper.validation.get_connection', return_value=mock_conn):
-            cutoff_time = datetime.utcnow() - timedelta(hours=24)
+            cutoff_time = datetime.now(UTC) - timedelta(hours=24)
             results = await validator._validate_pbp_monotonicity(cutoff_time)
             
             # Check clock progression result
@@ -450,7 +450,7 @@ class TestDataQualityValidation:
         }
         
         with patch('nba_scraper.validation.get_connection', return_value=mock_conn):
-            cutoff_time = datetime.utcnow() - timedelta(hours=24)
+            cutoff_time = datetime.now(UTC) - timedelta(hours=24)
             results = await validator._validate_pbp_monotonicity(cutoff_time)
             
             # Check period boundary result
@@ -482,7 +482,7 @@ class TestDataQualityValidation:
         }
         
         with patch('nba_scraper.validation.get_connection', return_value=mock_conn):
-            cutoff_time = datetime.utcnow() - timedelta(hours=24)
+            cutoff_time = datetime.now(UTC) - timedelta(hours=24)
             results = await validator._validate_pbp_monotonicity(cutoff_time)
             
             # Check completeness result
@@ -518,7 +518,7 @@ class TestDataQualityValidation:
         }
         
         with patch('nba_scraper.validation.get_connection', return_value=mock_conn):
-            cutoff_time = datetime.utcnow() - timedelta(hours=24)
+            cutoff_time = datetime.now(UTC) - timedelta(hours=24)
             results = await validator._validate_pbp_monotonicity(cutoff_time)
             
             # All 5 validation checks should pass

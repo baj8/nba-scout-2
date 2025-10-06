@@ -5,7 +5,7 @@ import time
 from collections import defaultdict, deque
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, UTC
 from functools import wraps
 from typing import Any, Dict, List, Optional, Tuple, Union, Callable
 import threading
@@ -29,8 +29,8 @@ class QueryStats:
     max_duration: float = 0.0
     avg_duration: float = 0.0
     recent_executions: deque = field(default_factory=lambda: deque(maxlen=100))
-    first_seen: datetime = field(default_factory=datetime.utcnow)
-    last_seen: datetime = field(default_factory=datetime.utcnow)
+    first_seen: datetime = field(default_factory=lambda: datetime.now(UTC))
+    last_seen: datetime = field(default_factory=lambda: datetime.now(UTC))
     
     def add_execution(self, duration: float):
         """Add a new query execution timing."""
@@ -41,9 +41,9 @@ class QueryStats:
         self.avg_duration = self.total_duration / self.execution_count
         self.recent_executions.append({
             'duration': duration,
-            'timestamp': datetime.utcnow()
+            'timestamp': datetime.now(UTC)
         })
-        self.last_seen = datetime.utcnow()
+        self.last_seen = datetime.now(UTC)
 
 class QueryMonitor:
     """Monitor and analyze database query performance."""
@@ -99,7 +99,7 @@ class QueryMonitor:
                     'query_hash': query_hash,
                     'query': query[:500],  # Truncate for storage
                     'duration': duration,
-                    'timestamp': datetime.utcnow(),
+                    'timestamp': datetime.now(UTC),
                     'params': str(params) if params else None
                 })
                 
@@ -521,7 +521,7 @@ class DatabaseOptimizer:
         return {
             'tables': [dict(row) for row in rows],
             'total_size_bytes': sum(row['size_bytes'] for row in rows),
-            'analysis_timestamp': datetime.utcnow()
+            'analysis_timestamp': datetime.now(UTC)
         }
     
     @monitor_function("analyze_index_usage", alert_on_error=True)
@@ -554,7 +554,7 @@ class DatabaseOptimizer:
             'indexes': [dict(row) for row in rows],
             'unused_indexes': unused_indexes,
             'total_index_size_bytes': sum(row['index_size_bytes'] for row in rows),
-            'analysis_timestamp': datetime.utcnow()
+            'analysis_timestamp': datetime.now(UTC)
         }
     
     @monitor_function("get_missing_indexes", alert_on_error=True)
@@ -642,7 +642,7 @@ class DatabaseOptimizer:
                     'frequent_queries': frequent_queries
                 },
                 'recommendations': recommendations,
-                'generated_at': datetime.utcnow()
+                'generated_at': datetime.now(UTC)
             }
 
 # Global instances

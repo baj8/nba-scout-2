@@ -7,7 +7,7 @@ This tests the new advanced metrics functionality without requiring full environ
 
 import sys
 import os
-from datetime import datetime
+from datetime import datetime, UTC
 
 # Add the src directory to the Python path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'src'))
@@ -117,7 +117,7 @@ def test_extractor_enhancements():
                         'usage_pct': player_dict.get('USG_PCT'),
                         'source': 'nba_stats',
                         'source_url': source_url,
-                        'ingested_at_utc': datetime.utcnow()
+                        'ingested_at_utc': datetime.now(UTC)
                     }
                     
                     extracted_stats.append(advanced_stats)

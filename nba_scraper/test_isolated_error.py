@@ -73,7 +73,7 @@ async def test_database_operations():
     try:
         from nba_scraper.loaders import GameLoader, RefLoader, LineupLoader, PbpLoader
         from nba_scraper.models import GameRow, PbpEventRow
-        from datetime import datetime, date
+        from datetime import datetime, date, UTC
         from dateutil import tz
         
         print("1️⃣ Testing loader initialization...")
@@ -90,7 +90,7 @@ async def test_database_operations():
             game_row = GameRow(
                 game_id='test123',
                 season='2024-25',
-                game_date_utc=datetime.utcnow(),
+                game_date_utc=datetime.now(UTC),
                 game_date_local=date.today(),
                 arena_tz='America/New_York',
                 home_team_tricode='LAL',

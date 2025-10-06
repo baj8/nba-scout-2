@@ -1,7 +1,7 @@
 """Pipeline for processing entire NBA seasons with batch coordination."""
 
 import asyncio
-from datetime import datetime, date
+from datetime import datetime, date, UTC
 from typing import Optional, Dict, Any, List
 from dataclasses import dataclass
 
@@ -58,7 +58,7 @@ class SeasonPipeline:
         Returns:
             SeasonPipelineResult with processing summary
         """
-        start_time = datetime.utcnow()
+        start_time = datetime.now(UTC)
         
         result = SeasonPipelineResult(
             season=season,
@@ -130,7 +130,7 @@ class SeasonPipeline:
                     result.games_failed += 1
             
             result.success = result.games_processed > 0
-            result.duration_seconds = (datetime.utcnow() - start_time).total_seconds()
+            result.duration_seconds = (datetime.now(UTC) - start_time).total_seconds()
             
             logger.info("Season pipeline completed",
                        season=season,
@@ -140,7 +140,7 @@ class SeasonPipeline:
             
         except Exception as e:
             result.error = str(e)
-            result.duration_seconds = (datetime.utcnow() - start_time).total_seconds()
+            result.duration_seconds = (datetime.now(UTC) - start_time).total_seconds()
             logger.error("Season pipeline failed", season=season, error=str(e))
         
         return result
@@ -289,7 +289,7 @@ class SeasonPipeline:
             logger.info("Processing recent games", days_back=days_back, count=len(game_ids))
             
             # Process using existing season logic
-            start_time = datetime.utcnow()
+            start_time = datetime.now(UTC)
             
             result = SeasonPipelineResult(
                 season=season,
@@ -324,7 +324,7 @@ class SeasonPipeline:
                     result.games_failed += 1
             
             result.success = result.games_processed > 0
-            result.duration_seconds = (datetime.utcnow() - start_time).total_seconds()
+            result.duration_seconds = (datetime.now(UTC) - start_time).total_seconds()
             
             return result
             

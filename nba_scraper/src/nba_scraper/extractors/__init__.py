@@ -10,6 +10,10 @@ from .nba_stats import (
     extract_advanced_team_stats,
     extract_shot_chart_detail,
 )
+from .boxscore import (
+    extract_game_meta,
+    extract_game_from_boxscore,
+)
 from .bref import (
     extract_game_outcomes,
     extract_starting_lineups,
@@ -30,6 +34,9 @@ __all__ = [
     "extract_usage_player_stats",
     "extract_advanced_team_stats",
     "extract_shot_chart_detail",
+    # Boxscore extractors
+    "extract_game_meta",
+    "extract_game_from_boxscore",
     # B-Ref extractors
     "extract_game_outcomes",
     "extract_starting_lineups",

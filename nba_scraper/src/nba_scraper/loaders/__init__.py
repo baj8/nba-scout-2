@@ -1,61 +1,67 @@
-"""Loaders facade - finds and re-exports existing loader functions without rewriting them."""
+"""Loaders facade with dynamic resolution of canonical callables."""
 
-from importlib import import_module
-from types import ModuleType
-from typing import Callable, Optional
+import importlib
+from typing import Optional, Callable, Any
 
-# Candidate modules where loaders might exist
-_CANDIDATE_MODULES = [
-    "nba_scraper.loaders.games",
-    "nba_scraper.loaders.game_loader", 
-    "nba_scraper.loaders.core",
-    "nba_scraper.loaders.base",
-    "nba_scraper.loaders.metrics",
-    "nba_scraper.loaders.events",
-    "nba_scraper.loaders.pbp",
-    "nba_scraper.loaders.lineups",
-    "nba_scraper.loaders.shots",
+# Required canonical callables
+_REQUIRED_CALLABLES = [
+    "upsert_game",
+    "upsert_pbp", 
+    "upsert_lineups",
+    "upsert_shots",
+    "upsert_adv_metrics"
 ]
 
-# Expected function name mappings
-_NAME_MAP = {
-    "upsert_game": ["upsert_game", "insert_or_update_game", "load_game"],
-    "upsert_pbp": ["upsert_pbp", "load_pbp", "insert_pbp_events", "upsert_pbp_events"],
-    "upsert_lineups": ["upsert_lineups", "load_lineups", "insert_lineup_stints"],
-    "upsert_shots": ["upsert_shots", "load_shots", "insert_shots", "upsert_shot_coords"],
-    "upsert_adv_metrics": ["upsert_adv_metrics", "load_adv_metrics", "insert_adv_metrics"],
+# Likely modules to scan for each callable
+_MODULE_SCAN_MAP = {
+    "upsert_game": ["games", "game", "game_loader"],
+    "upsert_pbp": ["pbp", "play_by_play", "events"],
+    "upsert_lineups": ["lineups", "lineup", "starters"],
+    "upsert_shots": ["shots", "shot", "shooting"],
+    "upsert_adv_metrics": ["advanced_metrics", "metrics", "adv_metrics", "advanced"]
 }
 
 
-def _find_func(name_candidates: list[str]) -> Optional[Callable]:
-    """Find a function by trying multiple names across multiple modules."""
-    for mod_name in _CANDIDATE_MODULES:
+def _resolve_callable(callable_name: str) -> Optional[Callable]:
+    """Resolve a callable by scanning likely modules."""
+    possible_modules = _MODULE_SCAN_MAP.get(callable_name, [callable_name])
+    
+    for module_name in possible_modules:
         try:
-            mod: ModuleType = import_module(mod_name)
-        except Exception:
+            module = importlib.import_module(f".{module_name}", package=__package__)
+            if hasattr(module, callable_name):
+                func = getattr(module, callable_name)
+                if callable(func):
+                    return func
+        except ImportError:
             continue
-            
-        for func_name in name_candidates:
-            fn = getattr(mod, func_name, None)
-            if callable(fn):
-                return fn
+    
     return None
 
 
-# Find and expose loader functions
-upsert_game = _find_func(_NAME_MAP["upsert_game"])
-upsert_pbp = _find_func(_NAME_MAP["upsert_pbp"])
-upsert_lineups = _find_func(_NAME_MAP["upsert_lineups"])
-upsert_shots = _find_func(_NAME_MAP["upsert_shots"])
-upsert_adv_metrics = _find_func(_NAME_MAP["upsert_adv_metrics"])
+# Dynamically resolve all required callables
+upsert_game = _resolve_callable("upsert_game")
+upsert_pbp = _resolve_callable("upsert_pbp")
+upsert_lineups = _resolve_callable("upsert_lineups")
+upsert_shots = _resolve_callable("upsert_shots")
+upsert_adv_metrics = _resolve_callable("upsert_adv_metrics")
 
-# Only export functions that were successfully found
-__all__ = [
-    name for name, fn in {
-        "upsert_game": upsert_game,
-        "upsert_pbp": upsert_pbp,
-        "upsert_lineups": upsert_lineups,
-        "upsert_shots": upsert_shots,
-        "upsert_adv_metrics": upsert_adv_metrics,
-    }.items() if fn is not None
-]
+# Create aliases for backward compatibility
+upsert_pbp_events = upsert_pbp
+upsert_lineup_stints = upsert_lineups
+upsert_shot_events = upsert_shots
+
+# Export clean __all__ of resolved callables
+__all__ = []
+for callable_name in _REQUIRED_CALLABLES:
+    resolved = globals().get(callable_name)
+    if resolved is not None:
+        __all__.append(callable_name)
+
+# Add aliases to exports if base callable exists
+if upsert_pbp is not None:
+    __all__.append("upsert_pbp_events")
+if upsert_lineups is not None:
+    __all__.append("upsert_lineup_stints") 
+if upsert_shots is not None:
+    __all__.append("upsert_shot_events")

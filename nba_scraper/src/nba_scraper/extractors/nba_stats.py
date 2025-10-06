@@ -1,6 +1,6 @@
 """NBA Stats API extraction functions."""
 
-from datetime import datetime
+from datetime import datetime, UTC
 from typing import Any, Dict, List
 
 from ..models import GameRow, PbpEventRow, StartingLineupRow
@@ -338,7 +338,7 @@ def extract_advanced_player_stats(
                             
                             'source': 'nba_stats',
                             'source_url': source_url,
-                            'ingested_at_utc': datetime.utcnow()
+                            'ingested_at_utc': datetime.now(UTC)
                         }
                         
                         player_stats.append(advanced_stats)
@@ -420,7 +420,7 @@ def extract_misc_player_stats(
                             
                             'source': 'nba_stats',
                             'source_url': source_url,
-                            'ingested_at_utc': datetime.utcnow()
+                            'ingested_at_utc': datetime.now(UTC)
                         }
                         
                         player_stats.append(misc_stats)
@@ -509,7 +509,7 @@ def extract_usage_player_stats(
                             
                             'source': 'nba_stats',
                             'source_url': source_url,
-                            'ingested_at_utc': datetime.utcnow()
+                            'ingested_at_utc': datetime.now(UTC)
                         }
                         
                         player_stats.append(usage_stats)
@@ -593,7 +593,7 @@ def extract_advanced_team_stats(
                             
                             'source': 'nba_stats',
                             'source_url': source_url,
-                            'ingested_at_utc': datetime.utcnow()
+                            'ingested_at_utc': datetime.now(UTC)
                         }
                         
                         team_stats.append(advanced_stats)

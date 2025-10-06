@@ -41,7 +41,16 @@ def preprocess_nba_stats_data(obj: Any) -> Any:
     if isinstance(obj, list):
         return [preprocess_nba_stats_data(x) for x in obj]
     if isinstance(obj, dict):
-        return {k: preprocess_nba_stats_data(v) for k, v in obj.items()}
+        # Special handling for dictionaries to preserve game IDs as strings
+        result = {}
+        for k, v in obj.items():
+            # CRITICAL FIX: Game ID fields should NEVER be converted to integers
+            # They need to preserve leading zeros (e.g., "0022301234" must stay a string)
+            if k.upper() in ('GAME_ID', 'GAMEID', 'ID') and isinstance(v, str) and v.isdigit() and len(v) >= 8:
+                result[k] = v  # Keep as string to preserve leading zeros
+            else:
+                result[k] = preprocess_nba_stats_data(v)
+        return result
     return _coerce_scalar(obj)
 
 

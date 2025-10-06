@@ -1,12 +1,13 @@
 """Advanced metrics data loader with idempotent upserts for Tranche 1."""
 
-from datetime import datetime
+from datetime import datetime, UTC
 from typing import List, Dict, Any
 
 import asyncpg
 
 from ..db import get_connection
 from ..nba_logging import get_logger
+from ..pipelines.foundation import _maybe_transaction
 
 logger = get_logger(__name__)
 
@@ -30,7 +31,7 @@ class AdvancedMetricsLoader:
         updated_count = 0
         
         try:
-            async with conn.transaction():
+            async with _maybe_transaction(conn):
                 for stat in stats:
                     query = """
                     INSERT INTO advanced_player_stats (
@@ -148,7 +149,7 @@ class AdvancedMetricsLoader:
                         stat.get('pie'),
                         stat.get('source', 'nba_stats'),
                         stat.get('source_url'),
-                        stat.get('ingested_at_utc', datetime.utcnow())
+                        stat.get('ingested_at_utc', datetime.now(UTC))
                     )
                     
                     if result.startswith('UPDATE'):
@@ -178,7 +179,7 @@ class AdvancedMetricsLoader:
         updated_count = 0
         
         try:
-            async with conn.transaction():
+            async with _maybe_transaction(conn):
                 for stat in stats:
                     query = """
                     INSERT INTO misc_player_stats (
@@ -273,7 +274,7 @@ class AdvancedMetricsLoader:
                         stat.get('wnba_fantasy_pts'),
                         stat.get('source', 'nba_stats'),
                         stat.get('source_url'),
-                        stat.get('ingested_at_utc', datetime.utcnow())
+                        stat.get('ingested_at_utc', datetime.now(UTC))
                     )
                     
                     if result.startswith('UPDATE'):
@@ -303,7 +304,7 @@ class AdvancedMetricsLoader:
         updated_count = 0
         
         try:
-            async with conn.transaction():
+            async with _maybe_transaction(conn):
                 for stat in stats:
                     query = """
                     INSERT INTO usage_player_stats (
@@ -434,7 +435,7 @@ class AdvancedMetricsLoader:
                         stat.get('pct_pts'),
                         stat.get('source', 'nba_stats'),
                         stat.get('source_url'),
-                        stat.get('ingested_at_utc', datetime.utcnow())
+                        stat.get('ingested_at_utc', datetime.now(UTC))
                     )
                     
                     if result.startswith('UPDATE'):
@@ -464,7 +465,7 @@ class AdvancedMetricsLoader:
         updated_count = 0
         
         try:
-            async with conn.transaction():
+            async with _maybe_transaction(conn):
                 for stat in stats:
                     query = """
                     INSERT INTO advanced_team_stats (
@@ -571,7 +572,7 @@ class AdvancedMetricsLoader:
                         stat.get('pie'),
                         stat.get('source', 'nba_stats'),
                         stat.get('source_url'),
-                        stat.get('ingested_at_utc', datetime.utcnow())
+                        stat.get('ingested_at_utc', datetime.now(UTC))
                     )
                     
                     if result.startswith('UPDATE'):
@@ -584,3 +585,35 @@ class AdvancedMetricsLoader:
             raise
         
         return updated_count
+
+async def upsert_adv_metrics(conn, metrics_data):
+    """Standalone adapter function for advanced metrics upserts.
+    
+    Args:
+        conn: Database connection (unused, loader manages its own connection)
+        metrics_data: List of metrics dictionaries or empty list
+        
+    Returns:
+        None (for compatibility with pipeline expectations)
+    """
+    if not metrics_data:
+        return None
+    
+    loader = AdvancedMetricsLoader()
+    
+    # Route to appropriate upsert method based on data structure
+    if isinstance(metrics_data, list) and len(metrics_data) > 0:
+        sample = metrics_data[0]
+        
+        # Check which type of metrics based on available fields
+        if 'offensive_rating' in sample:
+            if 'player_id' in sample:
+                await loader.upsert_advanced_player_stats(metrics_data)
+            else:
+                await loader.upsert_advanced_team_stats(metrics_data)
+        elif 'plus_minus' in sample:
+            await loader.upsert_misc_player_stats(metrics_data)
+        elif 'usage_pct' in sample:
+            await loader.upsert_usage_player_stats(metrics_data)
+    
+    return None

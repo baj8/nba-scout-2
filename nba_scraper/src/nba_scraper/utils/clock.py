@@ -1,159 +1,126 @@
-"""Clock parsing and elapsed time calculation utilities with fractional seconds support."""
+"""Clock parsing utilities for NBA time formats."""
 
 import re
-from functools import lru_cache
+from typing import Optional
 
-# Regex patterns for clock parsing - now with proper bounds validation
-_CLOCK_RE = re.compile(r"^(\d{1,2}):([0-5]\d)(?:\.(\d{1,3}))?$")
-_ISO_DURATION_RE = re.compile(r"^PT(\d+)M(\d+)(?:\.(\d{1,3}))?S$")
-
-
-@lru_cache(maxsize=4096)
-def parse_clock_to_seconds(clock: str) -> float | None:
-    """Parse clock string to seconds, supporting fractional seconds.
-    
-    Supports formats:
-    - MM:SS (e.g., "12:34")
-    - MM:SS.fff (e.g., "12:34.567")
-    - PTMMS (e.g., "PT12M34S")
-    - PTMM.fffS (e.g., "PT12M34.567S")
-    
-    Args:
-        clock: Clock string to parse
-        
-    Returns:
-        Total seconds as float, or None if parsing fails
-    """
-    if not isinstance(clock, str):
-        return None
-    
-    s = clock.strip()
-    if not s:
-        return None
-
-    # Try MM:SS.fff format first
-    m = _CLOCK_RE.match(s)
-    if m:
-        mins, secs = int(m.group(1)), int(m.group(2))
-        # Validate realistic bounds for basketball (max 24 minutes for regulation periods)
-        if mins > 24:  # Reject unreasonable minutes for basketball
-            return None
-        frac = m.group(3)
-        frac_val = 0.0 if not frac else float(f"0.{frac}")
-        return mins * 60 + secs + frac_val
-
-    # Try ISO duration format PT11M45.123S
-    m = _ISO_DURATION_RE.match(s)
-    if m:
-        mins, secs = int(m.group(1)), int(m.group(2))
-        # Validate realistic bounds for basketball
-        if mins > 24 or secs > 59:  # Basketball periods are max 24 minutes
-            return None
-        frac = m.group(3)
-        frac_val = 0.0 if not frac else float(f"0.{frac}")
-        return mins * 60 + secs + frac_val
-
-    return None
+# Compiled regex for validation
+_CLOCK_FIELD_RE = re.compile(r"^\d{1,2}:[0-5]\d(?:\.\d{1,3})?$|^PT\d+M\d+(?:\.\d{1,3})?S$")
 
 
-def period_length_seconds(period: int) -> int:
-    """Get the length of a period in seconds.
+def validate_clock_format(value: str) -> str:
+    """Back-compat helper for older imports. Raises ValueError on bad format."""
+    if value and _CLOCK_FIELD_RE.match(value.strip()):
+        return value
+    raise ValueError(f"Invalid clock format: {value!r}")
+
+
+def format_seconds_as_clock(seconds: Optional[float]) -> str:
+    """Format seconds back to clock string MM:SS format.
     
     Args:
-        period: Period number (1-4 for regulation, 5+ for overtime)
+        seconds: Seconds to format (can be None or negative)
         
     Returns:
-        Period length in seconds (720 for regulation, 300 for OT)
-    """
-    return 12 * 60 if period <= 4 else 5 * 60
-
-
-def compute_seconds_elapsed(
-    period: int, 
-    clock_seconds: float | None, 
-    *, 
-    mode: str = "remaining"
-) -> float | None:
-    """Compute total seconds elapsed in game from period and clock time.
-    
-    Args:
-        period: Period number (1-based)
-        clock_seconds: Time value in seconds
-        mode: "remaining" (NBA default) or "elapsed" interpretation
-        
-    Returns:
-        Total seconds elapsed from start of game, or None if invalid
-        
-    Notes:
-        - Automatically detects and corrects mode mismatches
-        - Clamps negative results to 0.0
-        - Uses regulation (12min) and overtime (5min) period lengths
-    """
-    if clock_seconds is None or period is None:
-        return None
-    
-    # Calculate base seconds from completed periods
-    if period <= 4:
-        base = (period - 1) * 12 * 60  # Regulation periods
-    else:
-        base = 4 * 12 * 60 + (period - 5) * 5 * 60  # 4 reg + OT periods
-
-    period_len = period_length_seconds(period)
-    
-    # Calculate elapsed time in current period
-    if mode == "elapsed":
-        elapsed_in_period = float(clock_seconds)
-    else:  # "remaining" mode (NBA default)
-        elapsed_in_period = period_len - float(clock_seconds)
-
-    total = base + elapsed_in_period
-    
-    # Auto-correct if result is negative (wrong mode assumption)
-    if total < 0:
-        if mode == "remaining":
-            elapsed_in_period = float(clock_seconds)
-        else:
-            elapsed_in_period = period_len - float(clock_seconds)
-        
-        total = base + elapsed_in_period
-        if total < 0:
-            total = 0.0
-    
-    return total
-
-
-def format_seconds_as_clock(seconds: float) -> str:
-    """Format seconds as MM:SS.fff clock string.
-    
-    Args:
-        seconds: Time in seconds
-        
-    Returns:
-        Formatted clock string (e.g., "12:34.567")
+        Formatted clock string like "5:30" or "0:00"
     """
     if seconds is None or seconds < 0:
         return "0:00"
     
-    mins = int(seconds // 60)
-    secs = seconds % 60
+    minutes = int(seconds // 60)
+    remaining_seconds = seconds % 60
     
-    if secs == int(secs):
-        return f"{mins}:{int(secs):02d}"
+    # Handle fractional seconds
+    if remaining_seconds != int(remaining_seconds):
+        return f"{minutes}:{int(remaining_seconds):02d}.{int((remaining_seconds % 1) * 1000):03d}"
     else:
-        return f"{mins}:{secs:06.3f}"
+        return f"{minutes}:{int(remaining_seconds):02d}"
 
 
-def validate_clock_format(clock_str: str) -> bool:
-    """Validate if a string is in valid clock format.
+def parse_clock_to_seconds(time_str: str) -> Optional[float]:
+    """Parse various clock formats to seconds remaining.
+    
+    Supports:
+    - M:SS (e.g., "5:30")
+    - MM:SS (e.g., "12:00")
+    - MM:SS.fff (e.g., "11:45.500")
+    - PTxMxS[.fff] (e.g., "PT11M45S" or "PT11M45.500S")
     
     Args:
-        clock_str: String to validate
+        time_str: Time string in various formats
         
     Returns:
-        True if valid clock format, False otherwise
+        Seconds remaining as float, or None if parsing fails
     """
-    if not isinstance(clock_str, str):
-        return False
+    if not time_str or not isinstance(time_str, str):
+        return None
+        
+    time_clean = time_str.strip()
     
-    # Use parse_clock_to_seconds to validate - if it parses successfully, it's valid
-    return parse_clock_to_seconds(clock_str) is not None
+    # Handle ISO 8601 duration format: PT11M45S or PT11M45.500S
+    iso_match = re.match(r'^PT(\d+)M(\d+(?:\.\d+)?)S$', time_clean)
+    if iso_match:
+        minutes = int(iso_match.group(1))
+        seconds = float(iso_match.group(2))
+        return minutes * 60 + seconds
+    
+    # Handle MM:SS or MM:SS.fff format
+    clock_match = re.match(r'^(\d{1,2}):(\d{2})(?:\.(\d{1,3}))?$', time_clean)
+    if clock_match:
+        minutes = int(clock_match.group(1))
+        seconds = int(clock_match.group(2))
+        fractional = int(clock_match.group(3) or 0)
+        
+        # Convert fractional part to decimal (e.g., 500 milliseconds = 0.5 seconds)
+        if fractional > 0:
+            fractional_seconds = fractional / (10 ** len(str(fractional)))
+        else:
+            fractional_seconds = 0.0
+            
+        return minutes * 60 + seconds + fractional_seconds
+    
+    return None
+
+
+def compute_seconds_elapsed(time_remaining: str, period: int) -> Optional[float]:
+    """Compute seconds elapsed using NBA time remaining logic.
+    
+    Args:
+        time_remaining: Time remaining in period (various formats)
+        period: Period number (1-4 for regulation, 5+ for OT)
+        
+    Returns:
+        Seconds elapsed in period, or None if parsing fails
+    """
+    clock_seconds = parse_clock_to_seconds(time_remaining)
+    if clock_seconds is None:
+        return None
+    
+    # Get period length in seconds
+    if period <= 4:
+        period_length = 12 * 60  # Regulation: 12 minutes = 720 seconds
+    else:
+        period_length = 5 * 60   # Overtime: 5 minutes = 300 seconds
+    
+    # Calculate elapsed time
+    seconds_elapsed = period_length - clock_seconds
+    
+    # Safety: auto-flip once if negative (data inconsistency)
+    if seconds_elapsed < 0:
+        seconds_elapsed = abs(seconds_elapsed)
+    
+    return float(seconds_elapsed)
+
+
+def period_length_seconds(period: int) -> int:
+    """Get period length in seconds for NBA games.
+    
+    Args:
+        period: Period number (1-4 for regulation, 5+ for OT)
+        
+    Returns:
+        Period length in seconds (720 for regulation, 300 for OT)
+    """
+    if period <= 4:
+        return 12 * 60  # Regulation: 12 minutes = 720 seconds
+    else:
+        return 5 * 60   # Overtime: 5 minutes = 300 seconds

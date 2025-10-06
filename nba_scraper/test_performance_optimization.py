@@ -4,7 +4,7 @@ import asyncio
 import time
 import pytest
 from typing import List, Dict, Any
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, UTC
 
 from src.nba_scraper.performance import (
     bulk_optimizer, parallel_processor, query_monitor,
@@ -96,7 +96,7 @@ class TestPerformanceOptimizations:
                     window.pace48_expected,
                     window.source,
                     window.source_url,
-                    datetime.utcnow(),
+                    datetime.now(UTC),
                 ))
             
             # Execute bulk upsert
@@ -131,7 +131,7 @@ class TestPerformanceOptimizations:
                 results.append({
                     'game_id': shock.game_id,
                     'type': shock.shock_type.value,
-                    'processed_at': datetime.utcnow().isoformat()
+                    'processed_at': datetime.now(UTC).isoformat()
                 })
             return results
         
@@ -144,7 +144,7 @@ class TestPerformanceOptimizations:
                 chunk_results.append({
                     'game_id': shock.game_id,
                     'type': shock.shock_type.value,
-                    'processed_at': datetime.utcnow().isoformat()
+                    'processed_at': datetime.now(UTC).isoformat()
                 })
             return chunk_results
         

@@ -168,6 +168,113 @@ class PbpEventRow(BaseModel):
         # Return mapped value or default to SHOT_MADE if not found
         return event_map.get(event_str, EventType.SHOT_MADE)
     
+    @model_validator(mode='after')
+    def derive_clock_fields(self) -> 'PbpEventRow':
+        """Derive clock_seconds and seconds_elapsed with NBA time remaining logic.
+        
+        NBA assumptions:
+        - Regulation periods = 12 minutes (720 seconds)
+        - Overtime periods = 5 minutes (300 seconds)
+        - time_remaining format: M:SS, MM:SS, optional .fff, or PTxMxS[.fff]
+        - If negative elapsed time, auto-flip to elapsed once (safety)
+        """
+        if not self.time_remaining:
+            return self
+        
+        try:
+            # Parse clock_seconds from time_remaining
+            clock_seconds = self._parse_clock_to_seconds(self.time_remaining)
+            
+            if clock_seconds is not None:
+                # Store raw clock seconds
+                object.__setattr__(self, 'clock_seconds', clock_seconds)
+                
+                # Calculate seconds_elapsed using NBA period logic
+                period_length = self._get_period_length_seconds(self.period)
+                seconds_elapsed = period_length - clock_seconds
+                
+                # Safety: if negative, auto-flip to elapsed once
+                if seconds_elapsed < 0:
+                    seconds_elapsed = abs(seconds_elapsed)
+                
+                # Only update if we don't already have a value or if our derived value is more accurate
+                if self.seconds_elapsed is None:
+                    object.__setattr__(self, 'seconds_elapsed', float(seconds_elapsed))
+                    
+        except Exception as e:
+            # Don't fail the whole model for clock parsing issues
+            from ..nba_logging import get_logger
+            logger = get_logger(__name__)
+            logger.debug("Clock parsing failed", 
+                        game_id=self.game_id, 
+                        period=self.period,
+                        time_remaining=self.time_remaining, 
+                        error=str(e))
+        
+        return self
+    
+    @staticmethod
+    def _parse_clock_to_seconds(time_str: str) -> Optional[float]:
+        """Parse various clock formats to seconds remaining.
+        
+        Supports:
+        - M:SS (e.g., "5:30")
+        - MM:SS (e.g., "12:00")
+        - MM:SS.fff (e.g., "11:45.500")
+        - PTxMxS[.fff] (e.g., "PT11M45S" or "PT11M45.500S")
+        
+        Args:
+            time_str: Time string in various formats
+            
+        Returns:
+            Seconds remaining as float, or None if parsing fails
+        """
+        import re
+        
+        if not time_str or not isinstance(time_str, str):
+            return None
+            
+        time_clean = time_str.strip()
+        
+        # Handle ISO 8601 duration format: PT11M45S or PT11M45.500S
+        iso_match = re.match(r'^PT(\d+)M(\d+(?:\.\d+)?)S$', time_clean)
+        if iso_match:
+            minutes = int(iso_match.group(1))
+            seconds = float(iso_match.group(2))
+            return minutes * 60 + seconds
+        
+        # Handle MM:SS or MM:SS.fff format
+        clock_match = re.match(r'^(\d{1,2}):(\d{2})(?:\.(\d{1,3}))?$', time_clean)
+        if clock_match:
+            minutes = int(clock_match.group(1))
+            seconds = int(clock_match.group(2))
+            fractional = int(clock_match.group(3) or 0)
+            
+            # Convert fractional part to decimal (e.g., 500 milliseconds = 0.5 seconds)
+            if fractional > 0:
+                fractional_seconds = fractional / (10 ** len(str(fractional)))
+            else:
+                fractional_seconds = 0.0
+                
+            return minutes * 60 + seconds + fractional_seconds
+        
+        return None
+    
+    @staticmethod
+    def _get_period_length_seconds(period: int) -> int:
+        """Get period length in seconds using NBA rules.
+        
+        Args:
+            period: Period number (1-4 for regulation, 5+ for OT)
+            
+        Returns:
+            Period length in seconds
+        """
+        if period <= 4:
+            return 12 * 60  # Regulation: 12 minutes = 720 seconds
+        else:
+            return 5 * 60   # Overtime: 5 minutes = 300 seconds
+
     @classmethod
     def from_nba_stats(
         cls, 

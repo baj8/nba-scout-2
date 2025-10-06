@@ -1,13 +1,7 @@
-"""Simple transform functions for foundation data."""
+"""Transformer functions for NBA data processing."""
 
+from .games_bridge import to_db_game
+from .pbp import transform_pbp
 from .games import transform_game
-from .pbp import transform_pbp  
-from .lineups import transform_lineups
-from .shots import transform_shots
 
-__all__ = [
-    'transform_game',
-    'transform_pbp',
-    'transform_lineups', 
-    'transform_shots'
-]
+__all__ = ["to_db_game", "transform_pbp", "transform_game"]

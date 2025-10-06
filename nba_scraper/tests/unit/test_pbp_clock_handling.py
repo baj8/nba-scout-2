@@ -1,0 +1,185 @@
+"""Unit tests for PBP clock parsing and seconds_elapsed derivation."""
+
+import pytest
+from nba_scraper.models.pbp_rows import PbpEventRow
+from nba_scraper.models.enums import EventType
+
+
+class TestPbpClockHandling:
+    """Test PBP clock parsing and seconds_elapsed derivation."""
+
+    def test_clock_parsing_basic_formats(self):
+        """Test parsing of basic clock formats."""
+        test_cases = [
+            ("12:00", 720.0),  # Start of period
+            ("11:45", 705.0),  # Mid period
+            ("5:30", 330.0),   # Later in period
+            ("0:45", 45.0),    # End of period
+            ("0:00", 0.0),     # Period end
+        ]
+        
+        for time_str, expected_seconds in test_cases:
+            result = PbpEventRow._parse_clock_to_seconds(time_str)
+            assert result == expected_seconds, f"Failed for {time_str}"
+
+    def test_clock_parsing_fractional_seconds(self):
+        """Test parsing clock formats with fractional seconds."""
+        test_cases = [
+            ("11:45.5", 705.5),     # Half second
+            ("11:45.500", 705.5),   # 500 milliseconds
+            ("5:30.123", 330.123),  # 123 milliseconds
+            ("0:00.001", 0.001),    # 1 millisecond
+        ]
+        
+        for time_str, expected_seconds in test_cases:
+            result = PbpEventRow._parse_clock_to_seconds(time_str)
+            assert abs(result - expected_seconds) < 0.001, f"Failed for {time_str}"
+
+    def test_clock_parsing_iso_duration(self):
+        """Test parsing ISO 8601 duration format."""
+        test_cases = [
+            ("PT11M45S", 705.0),      # 11 minutes 45 seconds
+            ("PT5M30S", 330.0),       # 5 minutes 30 seconds
+            ("PT0M45S", 45.0),        # 0 minutes 45 seconds
+            ("PT11M45.5S", 705.5),    # With fractional seconds
+        ]
+        
+        for time_str, expected_seconds in test_cases:
+            result = PbpEventRow._parse_clock_to_seconds(time_str)
+            assert result == expected_seconds, f"Failed for {time_str}"
+
+    def test_seconds_elapsed_regulation_periods(self):
+        """Test seconds_elapsed calculation for regulation periods."""
+        # Q1 start (12:00 remaining)
+        pbp_event = PbpEventRow(
+            game_id="0022400001",
+            period=1,
+            event_idx=1,
+            time_remaining="12:00",
+            event_type=EventType.PERIOD_BEGIN,
+            source="test",
+            source_url="https://test.com"
+        )
+        
+        assert pbp_event.seconds_elapsed == 0.0  # Start of period
+        
+        # Q1 mid-period (8:30 remaining)
+        pbp_event = PbpEventRow(
+            game_id="0022400001",
+            period=1,
+            event_idx=50,
+            time_remaining="8:30",
+            event_type=EventType.SHOT_MADE,
+            source="test",
+            source_url="https://test.com"
+        )
+        
+        assert pbp_event.seconds_elapsed == 210.0  # 3:30 elapsed (12:00 - 8:30)
+        
+        # Q1 end (0:00 remaining)
+        pbp_event = PbpEventRow(
+            game_id="0022400001",
+            period=1,
+            event_idx=100,
+            time_remaining="0:00",
+            event_type=EventType.PERIOD_END,
+            source="test",
+            source_url="https://test.com"
+        )
+        
+        assert pbp_event.seconds_elapsed == 720.0  # Full 12 minutes elapsed
+
+    def test_seconds_elapsed_overtime_periods(self):
+        """Test seconds_elapsed calculation for overtime periods."""
+        # OT start (5:00 remaining)
+        pbp_event = PbpEventRow(
+            game_id="0022400001",
+            period=5,  # First OT
+            event_idx=1,
+            time_remaining="5:00",
+            event_type=EventType.PERIOD_BEGIN,
+            source="test",
+            source_url="https://test.com"
+        )
+        
+        assert pbp_event.seconds_elapsed == 0.0  # Start of OT
+        
+        # OT mid-period (2:30 remaining)
+        pbp_event = PbpEventRow(
+            game_id="0022400001",
+            period=5,
+            event_idx=50,
+            time_remaining="2:30",
+            event_type=EventType.SHOT_MADE,
+            source="test",
+            source_url="https://test.com"
+        )
+        
+        assert pbp_event.seconds_elapsed == 150.0  # 2:30 elapsed (5:00 - 2:30)
+
+    def test_negative_elapsed_time_safety(self):
+        """Test that negative elapsed times are auto-flipped."""
+        # This could happen with data inconsistencies
+        pbp_event = PbpEventRow(
+            game_id="0022400001",
+            period=1,
+            event_idx=1,
+            time_remaining="13:00",  # More than period length (invalid)
+            event_type=EventType.SHOT_MADE,
+            source="test",
+            source_url="https://test.com"
+        )
+        
+        # Should be positive (flipped from negative)
+        assert pbp_event.seconds_elapsed >= 0
+
+    def test_missing_time_remaining_handling(self):
+        """Test handling when time_remaining is missing."""
+        pbp_event = PbpEventRow(
+            game_id="0022400001",
+            period=1,
+            event_idx=1,
+            time_remaining=None,  # Missing time
+            event_type=EventType.SHOT_MADE,
+            source="test",
+            source_url="https://test.com"
+        )
+        
+        # Should not crash, seconds_elapsed should remain None
+        assert pbp_event.seconds_elapsed is None
+
+    def test_invalid_time_format_handling(self):
+        """Test handling of invalid time formats."""
+        invalid_formats = [
+            "invalid",
+            "25:99",  # Invalid minutes/seconds
+            "abc:def",
+            "",
+            "12",  # Missing colon
+        ]
+        
+        for invalid_time in invalid_formats:
+            pbp_event = PbpEventRow(
+                game_id="0022400001",
+                period=1,
+                event_idx=1,
+                time_remaining=invalid_time,
+                event_type=EventType.SHOT_MADE,
+                source="test",
+                source_url="https://test.com"
+            )
+            
+            # Should not crash, but seconds_elapsed might be None
+            assert isinstance(pbp_event, PbpEventRow)
+
+    def test_period_length_calculation(self):
+        """Test period length calculation for different periods."""
+        # Regulation periods (1-4)
+        for period in range(1, 5):
+            length = PbpEventRow._get_period_length_seconds(period)
+            assert length == 720  # 12 minutes = 720 seconds
+        
+        # Overtime periods (5+)
+        for period in range(5, 10):
+            length = PbpEventRow._get_period_length_seconds(period)
+            assert length == 300  # 5 minutes = 300 seconds

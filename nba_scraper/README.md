@@ -2,6 +2,28 @@
 
 A production-grade data pipeline for fetching, normalizing, validating, and persisting NBA historical datasets with async IO, rate limiting, and comprehensive analytics derivation.
 
+## Dev quickstart
+
+```bash
+# Setup environment
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -U pip
+pip install -e .
+
+# Raw harvest (no DB dependencies)
+python -m nba_scraper.tools.raw_harvest_date --date 2023-10-27 --root "/tmp/nba_raw"
+
+# Silver load (requires DB connection configured)
+python -m nba_scraper.tools.silver_load_date --date 2023-10-27 --raw-root "/tmp/nba_raw"
+
+# Run smoke tests
+python tests/smoke/test_imports.py
+
+# Test CLI (with all dependencies)
+nba-scraper --help
+```
+
 ## NBA Data Context
 
 ### Basketball Fundamentals for Developers

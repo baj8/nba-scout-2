@@ -1,7 +1,7 @@
 """Pipeline for data quality validation and integrity checks."""
 
 import asyncio
-from datetime import datetime, date, timedelta
+from datetime import datetime, date, timedelta, UTC
 from typing import Dict, Any, Optional
 from dataclasses import dataclass
 
@@ -45,7 +45,7 @@ class ValidationPipeline:
         Returns:
             Dictionary of validation results by check name
         """
-        start_time = datetime.utcnow()
+        start_time = datetime.now(UTC)
         results = {}
         
         try:
@@ -111,7 +111,7 @@ class ValidationPipeline:
             freshness_results = await self._validate_data_freshness()
             results.update(freshness_results)
             
-            duration = (datetime.utcnow() - start_time).total_seconds()
+            duration = (datetime.now(UTC) - start_time).total_seconds()
             logger.info("Data validation completed",
                        total_checks=len(results),
                        passed_checks=sum(1 for r in results.values() if r['passed']),
@@ -257,7 +257,7 @@ class ValidationPipeline:
                 recent_records = row['recent_records']
                 
                 if last_ingested:
-                    hours_since_last = (datetime.utcnow() - last_ingested).total_seconds() / 3600
+                    hours_since_last = (datetime.now(UTC) - last_ingested).total_seconds() / 3600
                     is_fresh = hours_since_last <= 48  # 48 hour threshold
                     
                     results[f'{table_name}_freshness'] = {
@@ -296,7 +296,7 @@ class ValidationPipeline:
         Returns:
             ValidationPipelineResult with execution summary
         """
-        start_time = datetime.utcnow()
+        start_time = datetime.now(UTC)
         
         result = ValidationPipelineResult(
             success=False,
@@ -317,7 +317,7 @@ class ValidationPipeline:
             result.checks_passed = sum(1 for r in validation_results.values() if r['passed'])
             result.checks_failed = result.checks_run - result.checks_passed
             result.success = result.checks_failed == 0
-            result.duration_seconds = (datetime.utcnow() - start_time).total_seconds()
+            result.duration_seconds = (datetime.now(UTC) - start_time).total_seconds()
             
             logger.info("Validation pipeline completed",
                        checks_run=result.checks_run,
@@ -328,7 +328,7 @@ class ValidationPipeline:
             
         except Exception as e:
             result.error = str(e)
-            result.duration_seconds = (datetime.utcnow() - start_time).total_seconds()
+            result.duration_seconds = (datetime.now(UTC) - start_time).total_seconds()
             logger.error("Validation pipeline failed", error=str(e))
         
         return result

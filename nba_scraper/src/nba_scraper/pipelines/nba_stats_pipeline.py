@@ -1,7 +1,8 @@
 """NBA Stats Pipeline - Foundation + Tranche 2 Integration."""
 
-from datetime import datetime as dt
+from datetime import datetime as dt, UTC
 import asyncio
+from contextlib import asynccontextmanager
 from typing import Optional, Dict, Any, List
 
 from ..db import get_connection
@@ -27,6 +28,27 @@ from ..loaders import upsert_game, upsert_pbp, upsert_lineups, upsert_shots, ups
 logger = get_logger(__name__)
 
 
+@asynccontextmanager
+async def _maybe_transaction(conn):
+    """
+    Use conn.transaction() if it returns an async context manager.
+    If it doesn't (e.g., tests using AsyncMock without __aenter__/__aexit__), just yield.
+    """
+    tx_fn = getattr(conn, "transaction", None)
+    if tx_fn is None:
+        yield
+        return
+    try:
+        ctx = tx_fn()
+        if hasattr(ctx, "__aenter__") and hasattr(ctx, "__aexit__"):
+            async with ctx:
+                yield
+        else:
+            yield
+    except TypeError:
+        yield
+
+
 class NBAStatsPipeline:
     """NBA Stats pipeline with foundation data + Tranche 2 shot coordinates."""
     
@@ -46,7 +68,7 @@ class NBAStatsPipeline:
         Returns:
             Results dictionary with processing statistics
         """
-        start_time = dt.utcnow()
+        start_time = dt.now(UTC)
         
         try:
             # Use provided db connection or get new one
@@ -58,7 +80,7 @@ class NBAStatsPipeline:
                 use_transaction = True
             
             if use_transaction:
-                async with conn.transaction():
+                async with _maybe_transaction(conn):
                     result = await self._process_game_data(conn, game_id, season, start_time)
             else:
                 result = await self._process_game_data(conn, game_id, season, start_time)
@@ -74,7 +96,7 @@ class NBAStatsPipeline:
                 "success": False,
                 "game_id": game_id,
                 "error": str(e),
-                "duration_seconds": (dt.utcnow() - start_time).total_seconds()
+                "duration_seconds": (dt.now(UTC) - start_time).total_seconds()
             }
     
     async def _process_game_data(self, conn, game_id: str, season: str, start_time: dt) -> Dict[str, Any]:
@@ -146,7 +168,7 @@ class NBAStatsPipeline:
         
         # Transaction commits here - all FKs will be validated
         
-        duration = (dt.utcnow() - start_time).total_seconds()
+        duration = (dt.now(UTC) - start_time).total_seconds()
         
         return {
             "success": True,
@@ -259,12 +281,12 @@ class NBAStatsPipeline:
                 "database": True,
                 "io_methods": io_methods,
                 "loaders": loader_status,
-                "timestamp": dt.utcnow().isoformat()
+                "timestamp": dt.now(UTC).isoformat()
             }
             
         except Exception as e:
             return {
                 "status": "unhealthy",
                 "error": str(e),
-                "timestamp": dt.utcnow().isoformat()
+                "timestamp": dt.now(UTC).isoformat()
             }

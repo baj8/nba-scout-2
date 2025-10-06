@@ -1,6 +1,6 @@
 """Derived analytics data loader with idempotent upserts."""
 
-from datetime import datetime
+from datetime import datetime, UTC
 from typing import List
 
 from ..models.derived_rows import Q1WindowRow, EarlyShockRow, ScheduleTravelRow
@@ -104,7 +104,7 @@ class DerivedLoader:
                     window.early_clock_rate,
                     window.source,
                     window.source_url,
-                    datetime.utcnow(),
+                    datetime.now(UTC),
                 ))
             
             # Use bulk optimizer for efficient upserts
@@ -193,7 +193,7 @@ class DerivedLoader:
                         shock.notes,
                         shock.source,
                         shock.source_url,
-                        datetime.utcnow(),
+                        datetime.now(UTC),
                     ))
                 
                 return chunk_data
@@ -244,7 +244,7 @@ class DerivedLoader:
                     shock.notes,
                     shock.source,
                     shock.source_url,
-                    datetime.utcnow(),
+                    datetime.now(UTC),
                 ))
         
         # Use performance-optimized connection and bulk operations
@@ -314,7 +314,7 @@ class DerivedLoader:
                     travel.prev_altitude_m,
                     travel.source,
                     travel.source_url,
-                    datetime.utcnow(),
+                    datetime.now(UTC),
                 ))
             
             # Use bulk optimizer for efficient upserts

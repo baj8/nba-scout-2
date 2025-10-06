@@ -2,7 +2,7 @@
 
 import asyncio
 from abc import ABC, abstractmethod
-from datetime import datetime, date
+from datetime import datetime, date, UTC
 from typing import Optional, Dict, Any, List, Set
 from dataclasses import dataclass
 
@@ -84,7 +84,7 @@ class BaseSourcePipeline(ABC):
             success=False,
             data_types_processed=[],
             records_updated={},
-            duration_seconds=(datetime.utcnow() - start_time).total_seconds()
+            duration_seconds=(datetime.now(UTC) - start_time).total_seconds()
         )
 
 
@@ -115,7 +115,7 @@ class NBAStatsPipeline(BaseSourcePipeline):
         dry_run: bool = False
     ) -> SourcePipelineResult:
         """Process game data from NBA Stats API including advanced metrics (Tranche 1)."""
-        start_time = datetime.utcnow()
+        start_time = datetime.now(UTC)
         result = await self._create_result(game_id, start_time)
         
         try:
@@ -313,7 +313,7 @@ class NBAStatsPipeline(BaseSourcePipeline):
             # Update result
             result.success = True
             result.data_types_processed = ['advanced_metrics']
-            result.duration_seconds = (datetime.utcnow() - start_time).total_seconds()
+            result.duration_seconds = (datetime.now(UTC) - start_time).total_seconds()
             
             logger.info("NBA Stats processing completed", 
                        game_id=game_id, 

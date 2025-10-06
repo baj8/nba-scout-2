@@ -20,6 +20,19 @@ class IoFacade:
                 return await getattr(self.impl, name)(game_id)
         raise AttributeError(f"No boxscore method found on {type(self.impl).__name__}")
 
+    async def fetch_boxscore_summary(self, game_id: str) -> Dict[str, Any]:
+        """
+        Returns BoxScoreSummaryV2 payload (or equivalent) for the game_id.
+        Must call the underlying client method by trying common names:
+        ['boxscore_summary', 'fetch_boxscore_summary', 'boxscoresummaryv2', 'get_boxscore_summary'].
+        Raise a clear RuntimeError if none exist.
+        """
+        for name in ("boxscore_summary", "fetch_boxscore_summary", "boxscoresummaryv2", "get_boxscore_summary"):
+            if hasattr(self.impl, name):
+                return await getattr(self.impl, name)(game_id)
+        raise RuntimeError(f"No boxscore summary method found on {type(self.impl).__name__}. "
+                          f"Tried: boxscore_summary, fetch_boxscore_summary, boxscoresummaryv2, get_boxscore_summary")
+
     async def fetch_pbp(self, game_id: str) -> Dict[str, Any]:
         """Fetch play-by-play data for a game."""
         for name in ("pbp", "fetch_pbp", "get_pbp", "play_by_play"):

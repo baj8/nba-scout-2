@@ -1,7 +1,7 @@
 """Pipeline for deriving analytics tables from raw NBA data with source awareness."""
 
 import asyncio
-from datetime import datetime, date
+from datetime import datetime, date, UTC
 from typing import List, Optional, Dict, Any, Set
 from dataclasses import dataclass
 
@@ -119,7 +119,7 @@ class DerivePipeline:
             available_sources: Set of data sources that have been processed
                              If None, assumes all sources are available
         """
-        start_time = datetime.utcnow()
+        start_time = datetime.now(UTC)
         
         # Auto-detect available sources if not provided
         if available_sources is None:
@@ -190,7 +190,7 @@ class DerivePipeline:
                     result.tables_failed.append(table)
             
             result.success = len(result.tables_processed) > 0
-            result.duration_seconds = (datetime.utcnow() - start_time).total_seconds()
+            result.duration_seconds = (datetime.now(UTC) - start_time).total_seconds()
             
             logger.info("Analytics derivation completed",
                        tables_processed=len(result.tables_processed),
@@ -200,7 +200,7 @@ class DerivePipeline:
             
         except Exception as e:
             result.error = str(e)
-            result.duration_seconds = (datetime.utcnow() - start_time).total_seconds()
+            result.duration_seconds = (datetime.now(UTC) - start_time).total_seconds()
             logger.error("Analytics derivation failed", error=str(e))
         
         return result

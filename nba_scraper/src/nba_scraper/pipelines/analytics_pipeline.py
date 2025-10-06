@@ -1,7 +1,7 @@
 """Pipeline for computing derived analytics and advanced metrics."""
 
 import asyncio
-from datetime import datetime, date
+from datetime import datetime, date, UTC
 from typing import Optional, Dict, Any, List, Set
 from dataclasses import dataclass
 
@@ -44,7 +44,7 @@ class AnalyticsPipeline:
         Returns:
             AnalyticsPipelineResult with computation summary
         """
-        start_time = datetime.utcnow()
+        start_time = datetime.now(UTC)
         
         result = AnalyticsPipelineResult(
             success=False,
@@ -97,7 +97,7 @@ class AnalyticsPipeline:
             result.games_analyzed = count_row[0] if count_row else 0
             
             result.success = True
-            result.duration_seconds = (datetime.utcnow() - start_time).total_seconds()
+            result.duration_seconds = (datetime.now(UTC) - start_time).total_seconds()
             
             logger.info("Team analytics computation completed",
                        metrics=len(result.metrics_computed),
@@ -106,7 +106,7 @@ class AnalyticsPipeline:
             
         except Exception as e:
             result.error = str(e)
-            result.duration_seconds = (datetime.utcnow() - start_time).total_seconds()
+            result.duration_seconds = (datetime.now(UTC) - start_time).total_seconds()
             logger.error("Team analytics computation failed", error=str(e))
         
         return result
@@ -118,7 +118,7 @@ class AnalyticsPipeline:
         date_range: Optional[tuple[date, date]] = None
     ) -> AnalyticsPipelineResult:
         """Compute player-level advanced analytics."""
-        start_time = datetime.utcnow()
+        start_time = datetime.now(UTC)
         
         result = AnalyticsPipelineResult(
             success=False,
@@ -165,7 +165,7 @@ class AnalyticsPipeline:
             result.games_analyzed = count_row[0] if count_row else 0
             
             result.success = True
-            result.duration_seconds = (datetime.utcnow() - start_time).total_seconds()
+            result.duration_seconds = (datetime.now(UTC) - start_time).total_seconds()
             
             logger.info("Player analytics computation completed",
                        metrics=len(result.metrics_computed),
@@ -174,7 +174,7 @@ class AnalyticsPipeline:
             
         except Exception as e:
             result.error = str(e)
-            result.duration_seconds = (datetime.utcnow() - start_time).total_seconds()
+            result.duration_seconds = (datetime.now(UTC) - start_time).total_seconds()
             logger.error("Player analytics computation failed", error=str(e))
         
         return result

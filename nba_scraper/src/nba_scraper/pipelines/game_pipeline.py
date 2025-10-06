@@ -1,7 +1,7 @@
 """Pipeline for processing individual NBA games across all data sources."""
 
 import asyncio
-from datetime import datetime
+from datetime import datetime, UTC
 from typing import Optional, Dict, Any, List
 from dataclasses import dataclass
 
@@ -98,7 +98,7 @@ class GamePipeline:
         Returns:
             GamePipelineResult with processing details
         """
-        start_time = datetime.utcnow()
+        start_time = datetime.now(UTC)
         sources = sources or ['bref', 'nba_stats', 'gamebooks']
         
         result = GamePipelineResult(
@@ -117,7 +117,7 @@ class GamePipeline:
                 result.success = True
                 result.sources_processed = sources
                 result.records_updated = {source: 0 for source in sources}
-                result.duration_seconds = (datetime.utcnow() - start_time).total_seconds()
+                result.duration_seconds = (datetime.now(UTC) - start_time).total_seconds()
                 return result
             
             # Process each source concurrently with rate limiting
@@ -148,7 +148,7 @@ class GamePipeline:
                     result.records_updated.update(source_result)
             
             result.success = len(result.sources_processed) > 0
-            result.duration_seconds = (datetime.utcnow() - start_time).total_seconds()
+            result.duration_seconds = (datetime.now(UTC) - start_time).total_seconds()
             
             logger.info("Game pipeline completed",
                        game_id=game_id,
@@ -158,7 +158,7 @@ class GamePipeline:
             
         except Exception as e:
             result.error = str(e)
-            result.duration_seconds = (datetime.utcnow() - start_time).total_seconds()
+            result.duration_seconds = (datetime.now(UTC) - start_time).total_seconds()
             logger.error("Game pipeline failed", game_id=game_id, error=str(e))
         
         return result
