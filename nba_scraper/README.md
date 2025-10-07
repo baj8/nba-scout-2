@@ -200,7 +200,7 @@ async def fetch_with_recovery(url: str) -> dict
 - PostgreSQL 12+
 - Git
 
-### Installation
+### Development Setup
 
 1. **Clone the repository**
    ```bash
@@ -208,20 +208,20 @@ async def fetch_with_recovery(url: str) -> dict
    cd nba_scraper
    ```
 
-2. **Install dependencies**
+2. **Setup development environment**
    ```bash
-   # Using uv (recommended)
-   pip install uv
-   uv sync
+   # Complete setup with virtual environment and dependencies
+   make setup
    
-   # Or using pip
-   pip install -e .
+   # Or manual setup:
+   pip install -e ".[dev]"
    ```
 
-3. **Setup environment**
+3. **Configure environment**
    ```bash
+   # Copy environment template and customize
    cp .env.example .env
-   # Edit .env with your database credentials
+   # Edit .env with your database credentials and preferences
    ```
 
 4. **Create database and apply schema**
@@ -232,6 +232,49 @@ async def fetch_with_recovery(url: str) -> dict
    # Apply schema
    psql nba_scraper < schema.sql
    ```
+
+### Development Workflow
+
+The project includes a comprehensive Makefile for development tasks:
+
+```bash
+# Quick development setup
+make setup           # Create venv and install dependencies
+make dev-setup       # Complete setup + lint + unit tests
+
+# Code quality
+make lint           # Run ruff linting
+make typecheck      # Run mypy type checking  
+make format         # Auto-format with ruff --fix
+make precommit-install  # Install pre-commit hooks
+
+# Testing
+make test           # Run all tests
+make test-unit      # Run unit tests only
+make test-int       # Run integration tests only
+make cov            # Run tests with coverage report
+
+# Utilities
+make clean          # Clean build artifacts
+make ci-test        # Run full CI pipeline locally
+make validate       # Quick validation check
+```
+
+### Environment Configuration
+
+Copy `.env.example` to `.env` and configure your environment:
+
+```bash
+# Essential settings
+DATABASE_URL=postgresql+asyncpg://user:password@localhost:5432/nba_scraper
+REQUESTS_PER_MIN=45
+LOG_LEVEL=INFO
+
+# Optional features
+ENABLE_ASYNC_PROCESSING=true
+MAX_CONCURRENT_REQUESTS=5
+CACHE_ENABLE_HTTP_CACHE=true
+```
 
 ### Basic Usage
 

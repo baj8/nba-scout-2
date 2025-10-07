@@ -10,6 +10,151 @@
 
 This is a production-grade NBA Historical Scraping & Ingestion Engine that fetches, normalizes, validates, and persists NBA historical datasets. It's built with async-first architecture, comprehensive rate limiting, and multi-source data integration.
 
+## 🔒 STRICT REPOSITORY VALIDATION RULES
+
+**These rules are MANDATORY and must be enforced in ALL code changes:**
+
+### Game ID Validation
+- **Format**: Must be exactly 10 characters, numeric, starts with "0022" (regular season)
+- **Examples**: ✅ `"0022301234"` ❌ `"0012301234"` (wrong prefix) ❌ `"002230123"` (too short)
+- **Error Handling**: If invalid → `raise ValueError(f"invalid game_id: {game_id}")`
+- **Implementation**: Use regex `^0022\d{6}$` in `transform_game()`
+
+### Season Validation  
+- **Format**: Accept only "YYYY-YY" format (e.g., "2024-25")
+- **Error Handling**: If invalid/missing → `logger.warning("season format invalid: {season}")`
+- **Fallback**: Always use `derive_season_smart()` for automatic derivation
+- **Return**: Always return as string, never fail processing
+
+### Pipeline Integration Rules
+- **Critical Failures**: Game ID validation failures → raise `ValueError`
+- **Foundation Pipeline**: Must catch validation errors and set `game_processed=False`
+- **Non-Critical Issues**: Bad season formats → log warning (not error), continue processing
+- **Continuation**: Pipeline MUST continue PBP + lineups even if game metadata fails
+- **Error Aggregation**: Collect all errors in `result["errors"]` list
+
+### Logging Requirements
+- **Logger**: Always use `logging.getLogger(__name__)`
+- **Context**: Include game_id, season, error type in all log messages
+- **Levels**: Critical validation → ERROR, format issues → WARNING
+- **Format**: Structured logging with trace context
+
+### Testing Requirements
+- **Coverage**: ALL validation errors must have unit test coverage
+- **Game Transformer Tests**: Must pass strict validation rules (22/22 tests)
+- **Foundation Pipeline Tests**: Must handle validation errors gracefully (8/8 tests)
+- **Guardrail Tests**: Ensure preprocessing never strips leading zeros from game IDs
+- **Integration**: Test continuation of PBP/lineups after game validation failures
+
+### Repository Hardening
+- **CI Pipeline**: Must run pytest + ruff + mypy on all PRs
+- **Pre-commit Hooks**: Enforce style/type checks before commits
+- **PR Template**: Requires validation checklist completion
+- **Version Control**: All validation rule changes require version bump
+
+### Code Examples
+
+**✅ CORRECT Game ID Validation:**
+```python
+import re
+import logging
+
+logger = logging.getLogger(__name__)
+
+def transform_game(game_data: dict) -> Game:
+    game_id = str(game_data.get("game_id", ""))
+    
+    # Strict validation - exactly 10 chars, numeric, starts with "0022"
+    if not re.match(r"^0022\d{6}$", game_id):
+        raise ValueError(f"invalid game_id: {game_id!r} - must be 10-char string matching ^0022\\d{{6}}$")
+    
+    # Season validation with fallback
+    season = str(game_data.get("season", ""))
+    if not re.match(r"^\d{4}-\d{2}$", season):
+        logger.warning("season format invalid: %s - expected YYYY-YY format", season, 
+                      extra={"game_id": game_id, "invalid_season": season})
+        season = derive_season_smart(game_id, game_data.get("game_date"), season)
+    
+    return Game(game_id=game_id, season=season, ...)
+```
+
+**✅ CORRECT Pipeline Error Handling:**
+```python
+async def process_game(self, game_id: str) -> dict:
+    results = {"game_id": game_id, "game_processed": False, "errors": []}
+    
+    try:
+        game_meta = extract_game_from_boxscore(boxscore_resp)
+        game_model = transform_game(game_meta)  # Can raise ValueError
+        await upsert_game(conn, game_model)
+        results["game_processed"] = True
+    except ValueError as e:
+        error_msg = f"Game metadata validation failed: {e}"
+        results["errors"].append(error_msg)
+        logger.error(error_msg, game_id=game_id, exc_info=True)
+        # DON'T return early - continue with PBP processing
+    
+    # Continue PBP processing even if game validation failed
+    try:
+        pbp_events = process_pbp(game_id)
+        results["pbp_events_processed"] = len(pbp_events)
+    except Exception as e:
+        results["errors"].append(f"PBP processing failed: {e}")
+    
+    return results
+```
+
+**❌ WRONG - Don't Do This:**
+```python
+# DON'T: Lenient game ID validation
+if len(game_id) < 8:  # Too lenient!
+    
+# DON'T: Fail on season format issues  
+if not season_valid:
+    raise ValueError("Bad season")  # Should warn + fallback!
+    
+# DON'T: Stop processing on validation errors
+if validation_error:
+    return {"error": "Failed"}  # Should continue PBP/lineups!
+```
+
+# Executive Summary
+
+This repository powers an async-first NBA data pipeline with strict validation rules to ensure data integrity and production readiness.  
+The goal of this DEV_NOTES file is to give engineers a single source of truth for how to contribute safely, efficiently, and consistently.  
+
+At the heart of this project is the **strict validation system**: every game, season, and pipeline event must meet exact rules before entering the database.  
+This protects against silent data corruption and guarantees downstream analytics reliability.
+
+---
+
+## 🔒 Strict Validation Rules (Refined)
+
+- **Game ID Validation**
+  - ✅ Must be exactly 10 characters
+  - ✅ Must be numeric
+  - ✅ Must start with `0022` (regular season format)
+  - ❌ Wrong: `"22301234"`, `"game1"`
+
+- **Season Validation**
+  - ✅ Accept only `"YYYY-YY"` format (e.g. `"2024-25"`)
+  - ⚠️ Invalid formats (e.g. `"2024"`, `"2024-2025"`, `"24-25"`) will log a warning and fall back to `derive_season_smart()`
+
+- **Pipeline Integration Rules**
+  - Critical failures → `ValueError` raised  
+  - Non-critical issues → logged as warnings but pipeline continues
+
+- **Logging Requirements**
+  - Use `logging.getLogger(__name__)`  
+  - Always include game_id/season context in log messages
+
+- **Testing Requirements**
+  - Every validation error path must have at least one unit test
+  - Edge cases (bad game_id, malformed season) must be covered
+
+- **Repository Hardening**
+  - CI must run: `pytest --maxfail=1 -q`, `ruff check .`, and `mypy .`
+
 ### Key Technologies
 - **Python 3.11+** with async/await
 - **PostgreSQL 12+** with asyncpg driver
@@ -337,62 +482,48 @@ tests/
 - Test error conditions and edge cases
 - Validate data transformations thoroughly
 
+# Development Best Practices
+
+## 🔀 Branching & PR Strategy
+- Create feature branches off `main`
+- Use squash merges to keep history clean
+- PRs must reference related issues/tickets
+
+## 👥 Code Review
+- All PRs require peer review
+- Use the strict validation checklist in `.github/PULL_REQUEST_TEMPLATE`
+- Block merges if validation rules, lint, or type checks fail
+
+## 📦 Dependency Management
+- Pin all dependencies in `pyproject.toml`
+- Run `uv sync --frozen` before CI
+- Regularly update with `uv pip upgrade` and review changelog
+- Security scans must pass (Dependabot or equivalent)
+
+## 🧪 Testing Expectations
+- **Unit tests** for transformers, extractors, loaders
+- **Integration tests** for full pipeline runs
+- **Regression tests** for critical bugfixes
+- Minimum 90% coverage required on PRs
+
+## 📊 Logging & Monitoring
+- Use structured logs (`game_id`, `season`, `event_type`)
+- Log levels: INFO for success, WARNING for recoverable issues, ERROR for failures
+- Monitor ETL runs with alerts on pipeline errors
+
+## ⚙️ CI/CD Standards
+- CI must include: tests, lint, type check, coverage
+- CD must validate migrations and run smoke tests before deploy
+
+## 🔑 Security Guidelines
+- Never commit API keys or secrets
+- Use `.env` with `dotenv` (ignored by git)
+- Rotate keys regularly
+
+## 📚 Documentation Standards
+- Update README for new features
+- Maintain CHANGELOG.md with every release
+- All public functions require docstrings
+
 ## Deployment & Operations
-
-### Safe Backfill Process
-```bash
-# Start with recent season (faster feedback)
-nba-scraper backfill --seasons 2024-25 --dry-run
-nba-scraper backfill --seasons 2024-25
-
-# Process earlier seasons individually
-nba-scraper backfill --seasons 2023-24
-nba-scraper backfill --seasons 2022-23
-
-# Derive analytics for all seasons
-nba-scraper derive --date-range 2021-10-01..2025-06-30
-
-# Final validation
-nba-scraper validate --since 2021-10-01
 ```
-
-### Monitoring
-```bash
-# Watch logs in real-time
-tail -f logs/nba_scraper.log | jq '.'
-
-# Check database growth
-psql nba_scraper -c "
-SELECT schemaname, tablename, 
-       pg_size_pretty(pg_total_relation_size(schemaname||'.'||tablename)) as size
-FROM pg_tables 
-WHERE schemaname = 'public' 
-ORDER BY pg_total_relation_size(schemaname||'.'||tablename) DESC;
-"
-```
-
-## Contributing Guidelines
-
-1. **Fork and Branch**: Create feature branches from main
-2. **Code Quality**: Run `ruff format && ruff check && mypy src/nba_scraper`
-3. **Testing**: Add tests for new functionality
-4. **Documentation**: Update relevant docs and docstrings
-5. **Pull Requests**: Include clear description and test results
-
-## Useful Resources
-
-- **Project Documentation**: `README.md`
-- **Database Schema**: `schema.sql`
-- **Configuration Examples**: `.env.example`
-- **API Documentation**: Inline docstrings and type hints
-- **Test Examples**: `tests/` directory
-
-## Development Tips
-
-1. **Use dry-run mode** for testing pipeline changes
-2. **Start with small date ranges** when debugging
-3. **Check logs frequently** - structured logging provides good visibility
-4. **Validate data quality** after significant changes
-5. **Use database constraints** to catch data issues early
-6. **Profile memory usage** on large backfills
-7. **Test rate limiting** - respect API limits

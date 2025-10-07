@@ -1,35 +1,33 @@
 # NBA Scraper Development Makefile
-.PHONY: help setup install test test-unit test-integration lint format clean docs run-dev
+.PHONY: help setup install install-prod lint typecheck test test-unit test-int cov precommit-install format clean dev-setup ci-test validate
 
 # Default target
 help:
-	@echo "🏀 NBA Scraper Development Commands"
-	@echo "===================================="
+	@echo "NBA Scraper Development Tools"
+	@echo "============================="
 	@echo ""
-	@echo "Setup & Installation:"
-	@echo "  setup          - Complete development environment setup"
-	@echo "  install        - Install dependencies (production + dev)"
+	@echo "Setup:"
+	@echo "  setup          - Create venv and install dev dependencies"
+	@echo "  install        - Install all dependencies"
 	@echo "  install-prod   - Install production dependencies only"
+	@echo ""
+	@echo "Code Quality:"
+	@echo "  lint           - Run linting (ruff check)"
+	@echo "  typecheck      - Run type checking (mypy)"
+	@echo "  format         - Format code (ruff --fix)"
+	@echo "  precommit-install - Install pre-commit hooks"
 	@echo ""
 	@echo "Testing:"
 	@echo "  test           - Run all tests"
 	@echo "  test-unit      - Run unit tests only"
-	@echo "  test-integration - Run integration tests only"
-	@echo "  test-coverage  - Run tests with coverage report"
-	@echo ""
-	@echo "Code Quality:"
-	@echo "  lint           - Run linting (ruff + mypy)"
-	@echo "  format         - Format code (black + ruff)"
-	@echo "  check-format   - Check if code is formatted"
+	@echo "  test-int       - Run integration tests only"
+	@echo "  cov            - Run tests with coverage report"
 	@echo ""
 	@echo "Development:"
-	@echo "  run-dev        - Run development server/CLI"
-	@echo "  docs           - Generate documentation"
 	@echo "  clean          - Clean build artifacts and cache"
-	@echo ""
-	@echo "Database:"
-	@echo "  db-setup       - Initialize database schema"
-	@echo "  db-test        - Run database tests"
+	@echo "  dev-setup      - Complete development setup"
+	@echo "  ci-test        - Run CI pipeline locally"
+	@echo "  validate       - Quick validation"
 
 # Environment setup
 setup:
@@ -46,6 +44,24 @@ install-prod:
 	@echo "📦 Installing production dependencies..."
 	@pip install -e .
 
+# Code quality targets
+lint:
+	@echo "🔍 Running linting..."
+	@python -m ruff check src/ tests/
+
+typecheck:
+	@echo "🔍 Running type checking..."
+	@python -m mypy src/
+
+format:
+	@echo "🎨 Formatting code..."
+	@python -m ruff check --fix src/ tests/
+	@python -m ruff format src/ tests/
+
+precommit-install:
+	@echo "🔗 Installing pre-commit hooks..."
+	@pre-commit install
+
 # Testing targets
 test:
 	@echo "🧪 Running all tests..."
@@ -55,47 +71,18 @@ test-unit:
 	@echo "🧪 Running unit tests..."
 	@python -m pytest tests/unit/ -v --tb=short
 
-test-integration:
+test-int:
 	@echo "🧪 Running integration tests..."
-	@python -m pytest tests/integration/ -v --tb=short
+	@python -m pytest tests/integration/ -v --tb=short -m integration
 
-test-coverage:
+cov:
 	@echo "📊 Running tests with coverage..."
-	@python -m pytest tests/ --cov=src/nba_scraper --cov-report=html --cov-report=term-missing
+	@python -m pytest tests/ --cov=src/nba_scraper --cov-report=term-missing --cov-report=html
 
-# Code quality
-lint:
-	@echo "🔍 Running linters..."
-	@echo "  → ruff check..."
-	@python -m ruff check src/ tests/
-	@echo "  → mypy check..."
-	@python -m mypy src/nba_scraper/
-
-format:
-	@echo "🎨 Formatting code..."
-	@echo "  → black formatting..."
-	@python -m black src/ tests/
-	@echo "  → ruff auto-fix..."
-	@python -m ruff check src/ tests/ --fix
-
-check-format:
-	@echo "🔍 Checking code formatting..."
-	@python -m black --check src/ tests/
-	@python -m ruff check src/ tests/
-
-# Development utilities
-run-dev:
-	@echo "🚀 Running in development mode..."
-	@python -m nba_scraper --help
-
-docs:
-	@echo "📖 Generating documentation..."
-	@echo "Documentation generation not yet implemented"
-
+# Clean up
 clean:
-	@echo "🧹 Cleaning build artifacts..."
+	@echo "🧹 Cleaning up..."
 	@find . -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
-	@find . -type d -name "*.egg-info" -exec rm -rf {} + 2>/dev/null || true
 	@find . -type d -name ".pytest_cache" -exec rm -rf {} + 2>/dev/null || true
 	@find . -type d -name ".mypy_cache" -exec rm -rf {} + 2>/dev/null || true
 	@find . -type d -name ".ruff_cache" -exec rm -rf {} + 2>/dev/null || true
@@ -115,7 +102,7 @@ db-test:
 dev-setup: setup install lint test-unit
 	@echo "✅ Development environment ready!"
 
-ci-test: lint test-coverage
+ci-test: lint typecheck cov
 	@echo "✅ CI pipeline complete!"
 
 # Quick validation

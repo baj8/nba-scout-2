@@ -13,6 +13,20 @@ jobs:
       matrix:
         python-version: ["3.11", "3.12", "3.13"]
     
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: nba_scraper_test
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+    
     steps:
     - uses: actions/checkout@v4
     
@@ -28,20 +42,56 @@ jobs:
         pip install -e .[dev,test]
         pip install ruff mypy types-python-dateutil types-pyyaml
     
+    - name: Set up environment
+      run: |
+        cp .env.example .env
+        echo "DATABASE_URL=postgresql+asyncpg://postgres:postgres@localhost:5432/nba_scraper_test" >> .env
+    
     - name: Lint with ruff
       run: |
-        ruff check .
+        ruff check src/ tests/
     
     - name: Type check with mypy
       run: |
         mypy src --package nba_scraper
     
-    - name: Test with pytest
+    - name: Test with pytest and generate coverage
       run: |
-        pytest -q --disable-warnings -W error::DeprecationWarning:src.nba_scraper -W ignore:ARC4\ has\ been\ moved\ to\ cryptography.hazmat.decrepit.ciphers.algorithms.ARC4:CryptographyDeprecationWarning -ra --cov=src --cov-report=term-missing
+        pytest tests/ \
+          --cov=src/nba_scraper \
+          --cov-report=xml \
+          --cov-report=term-missing \
+          --disable-warnings \
+          -W error::DeprecationWarning:src.nba_scraper \
+          -W ignore:ARC4\ has\ been\ moved\ to\ cryptography.hazmat.decrepit.ciphers.algorithms.ARC4:CryptographyDeprecationWarning \
+          -ra
+    
+    - name: Check coverage threshold
+      run: |
+        python -c "
+        import xml.etree.ElementTree as ET
+        import sys
+        try:
+            tree = ET.parse('coverage.xml')
+            root = tree.getroot()
+            coverage = float(root.attrib['line-rate']) * 100
+            print(f'Total coverage: {coverage:.2f}%')
+            if coverage < 90.0:
+                print(f'❌ Coverage {coverage:.2f}% is below 90% threshold')
+                sys.exit(1)
+            else:
+                print(f'✅ Coverage {coverage:.2f}% meets 90% threshold')
+        except FileNotFoundError:
+            print('❌ coverage.xml not found')
+            sys.exit(1)
+        except Exception as e:
+            print(f'❌ Error checking coverage: {e}')
+            sys.exit(1)
+        "
     
     - name: Upload coverage reports
-      uses: actions/upload-artifact@v3
+      uses: codecov/codecov-action@v3
       with:
-        name: coverage-${{ matrix.python-version }}
-        path: .coverage
+        file: ./coverage.xml
+        flags: unittests
+        name: codecov-umbrella

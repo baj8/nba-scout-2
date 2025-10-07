@@ -6,6 +6,7 @@ from typing import Any
 
 class GameStatus(str, Enum):
     """Game status enumeration."""
+
     SCHEDULED = "SCHEDULED"
     LIVE = "LIVE"
     IN_PROGRESS = "IN_PROGRESS"
@@ -14,9 +15,9 @@ class GameStatus(str, Enum):
     CANCELLED = "CANCELLED"
     SUSPENDED = "SUSPENDED"
     RESCHEDULED = "RESCHEDULED"
-    
+
     @classmethod
-    def _missing_(cls, value: Any) -> 'GameStatus':
+    def _missing_(cls, value: Any) -> "GameStatus":
         """Handle missing values by converting NBA Stats integer codes to enum values."""
         # Handle integer inputs from NBA Stats API
         if isinstance(value, int):
@@ -27,44 +28,45 @@ class GameStatus(str, Enum):
                 3: cls.FINAL,
             }
             return status_map.get(value, cls.SCHEDULED)
-        
+
         # Handle string representations of integers
         if isinstance(value, str) and value.isdigit():
             return cls._missing_(int(value))
-        
+
         # Handle common string variations
         if isinstance(value, str):
             status_str = value.upper().strip()
             status_map = {
-                'FINAL': cls.FINAL,
-                'FINISHED': cls.FINAL,
-                'COMPLETED': cls.FINAL,
-                'LIVE': cls.LIVE,
-                'IN_PROGRESS': cls.IN_PROGRESS,
-                'ACTIVE': cls.LIVE,
-                'SCHEDULED': cls.SCHEDULED,
-                'UPCOMING': cls.SCHEDULED,
-                'POSTPONED': cls.POSTPONED,
-                'CANCELLED': cls.CANCELLED,
-                'CANCELED': cls.CANCELLED,
-                'SUSPENDED': cls.SUSPENDED,
-                'RESCHEDULED': cls.RESCHEDULED,
+                "FINAL": cls.FINAL,
+                "FINISHED": cls.FINAL,
+                "COMPLETED": cls.FINAL,
+                "LIVE": cls.LIVE,
+                "IN_PROGRESS": cls.IN_PROGRESS,
+                "ACTIVE": cls.LIVE,
+                "SCHEDULED": cls.SCHEDULED,
+                "UPCOMING": cls.SCHEDULED,
+                "POSTPONED": cls.POSTPONED,
+                "CANCELLED": cls.CANCELLED,
+                "CANCELED": cls.CANCELLED,
+                "SUSPENDED": cls.SUSPENDED,
+                "RESCHEDULED": cls.RESCHEDULED,
             }
             return status_map.get(status_str, cls.SCHEDULED)
-        
+
         # Default fallback
         return cls.SCHEDULED
 
 
 class RefRole(str, Enum):
     """Referee role enumeration."""
+
     CREW_CHIEF = "CREW_CHIEF"
     REFEREE = "REFEREE"
     UMPIRE = "UMPIRE"
     OFFICIAL = "OFFICIAL"
-    
+
     @classmethod
-    def _missing_(cls, value: Any) -> 'RefRole':
+    def _missing_(cls, value: Any) -> "RefRole":
         """Handle missing values for referee roles."""
         # Handle integer inputs
         if isinstance(value, int):
@@ -75,27 +77,28 @@ class RefRole(str, Enum):
                 4: cls.OFFICIAL,
             }
             return role_map.get(value, cls.REFEREE)
-        
+
         # Handle string variations
         if isinstance(value, str):
             role_str = value.upper().strip()
             role_map = {
-                'CREW_CHIEF': cls.CREW_CHIEF,
-                'CREW CHIEF': cls.CREW_CHIEF,
-                'CHIEF': cls.CREW_CHIEF,
-                'REFEREE': cls.REFEREE,
-                'REF': cls.REFEREE,
-                'UMPIRE': cls.UMPIRE,
-                'UMP': cls.UMPIRE,
-                'OFFICIAL': cls.OFFICIAL,
+                "CREW_CHIEF": cls.CREW_CHIEF,
+                "CREW CHIEF": cls.CREW_CHIEF,
+                "CHIEF": cls.CREW_CHIEF,
+                "REFEREE": cls.REFEREE,
+                "REF": cls.REFEREE,
+                "UMPIRE": cls.UMPIRE,
+                "UMP": cls.UMPIRE,
+                "OFFICIAL": cls.OFFICIAL,
             }
             return role_map.get(role_str, cls.REFEREE)
-        
+
         return cls.REFEREE
 
 
 class Position(str, Enum):
     """Player position enumeration."""
+
     PG = "PG"
     SG = "SG"
     SF = "SF"
@@ -103,9 +106,9 @@ class Position(str, Enum):
     C = "C"
     G = "G"  # Generic guard
     F = "F"  # Generic forward
-    
+
     @classmethod
-    def _missing_(cls, value: Any) -> 'Position':
+    def _missing_(cls, value: Any) -> "Position":
         """Handle missing values for player positions."""
         # Handle integer inputs
         if isinstance(value, int):
@@ -117,42 +120,43 @@ class Position(str, Enum):
                 5: cls.C,
             }
             return position_map.get(value, cls.G)
-        
+
         # Handle string variations
         if isinstance(value, str):
             pos_str = value.upper().strip()
             position_map = {
-                'PG': cls.PG,
-                'SG': cls.SG, 
-                'SF': cls.SF,
-                'PF': cls.PF,
-                'C': cls.C,
-                'G': cls.G,
-                'F': cls.F,
-                'POINT_GUARD': cls.PG,
-                'SHOOTING_GUARD': cls.SG,
-                'SMALL_FORWARD': cls.SF,
-                'POWER_FORWARD': cls.PF,
-                'CENTER': cls.C,
-                'GUARD': cls.G,
-                'FORWARD': cls.F,
+                "PG": cls.PG,
+                "SG": cls.SG,
+                "SF": cls.SF,
+                "PF": cls.PF,
+                "C": cls.C,
+                "G": cls.G,
+                "F": cls.F,
+                "POINT_GUARD": cls.PG,
+                "SHOOTING_GUARD": cls.SG,
+                "SMALL_FORWARD": cls.SF,
+                "POWER_FORWARD": cls.PF,
+                "CENTER": cls.C,
+                "GUARD": cls.G,
+                "FORWARD": cls.F,
             }
             return position_map.get(pos_str, cls.G)
-        
+
         return cls.G
 
 
 class InjuryStatus(str, Enum):
     """Player injury/availability status."""
+
     OUT = "OUT"
     QUESTIONABLE = "QUESTIONABLE"
     PROBABLE = "PROBABLE"
     ACTIVE = "ACTIVE"
     DNP = "DNP"  # Did not play
     INACTIVE = "INACTIVE"
-    
+
     @classmethod
-    def _missing_(cls, value: Any) -> 'InjuryStatus':
+    def _missing_(cls, value: Any) -> "InjuryStatus":
         """Handle missing values for injury status."""
         # Handle integer inputs
         if isinstance(value, int):
@@ -165,30 +169,31 @@ class InjuryStatus(str, Enum):
                 5: cls.INACTIVE,
             }
             return status_map.get(value, cls.ACTIVE)
-        
+
         # Handle string variations
         if isinstance(value, str):
             status_str = value.upper().strip()
             status_map = {
-                'OUT': cls.OUT,
-                'QUESTIONABLE': cls.QUESTIONABLE,
-                'PROBABLE': cls.PROBABLE,
-                'ACTIVE': cls.ACTIVE,
-                'DNP': cls.DNP,
-                'INACTIVE': cls.INACTIVE,
-                'AVAILABLE': cls.ACTIVE,
-                'HEALTHY': cls.ACTIVE,
-                'DOUBTFUL': cls.QUESTIONABLE,
-                'DAY_TO_DAY': cls.QUESTIONABLE,
-                'INJURED': cls.OUT,
+                "OUT": cls.OUT,
+                "QUESTIONABLE": cls.QUESTIONABLE,
+                "PROBABLE": cls.PROBABLE,
+                "ACTIVE": cls.ACTIVE,
+                "DNP": cls.DNP,
+                "INACTIVE": cls.INACTIVE,
+                "AVAILABLE": cls.ACTIVE,
+                "HEALTHY": cls.ACTIVE,
+                "DOUBTFUL": cls.QUESTIONABLE,
+                "DAY_TO_DAY": cls.QUESTIONABLE,
+                "INJURED": cls.OUT,
             }
             return status_map.get(status_str, cls.ACTIVE)
-        
+
         return cls.ACTIVE
 
 
 class EventType(str, Enum):
     """Play-by-play event types with support for NBA Stats integer codes."""
+
     SHOT_MADE = "SHOT_MADE"
     SHOT_MISSED = "SHOT_MISSED"
     FREE_THROW_MADE = "FREE_THROW_MADE"
@@ -216,11 +221,11 @@ class EventType(str, Enum):
     REPLAY_REVIEW = "REPLAY_REVIEW"
     INSTANT_REPLAY = "INSTANT_REPLAY"
     VIOLATION = "VIOLATION"
-    
+
     @classmethod
-    def _missing_(cls, value: Any) -> 'EventType':
+    def _missing_(cls, value: Any) -> "EventType":
         """Handle missing values by converting NBA Stats integer codes to enum values.
-        
+
         This prevents the '<' not supported between instances of 'int' and 'str' error
         by handling integer inputs from the NBA API.
         """
@@ -241,21 +246,22 @@ class EventType(str, Enum):
             13: cls.PERIOD_END,
             18: cls.INSTANT_REPLAY,
         }
-        
+
         # Handle integer inputs from NBA Stats API
         if isinstance(value, int):
             return nba_stats_map.get(value, cls.SHOT_MADE)
-        
+
         # Handle string representations of integers
         if isinstance(value, str) and value.isdigit():
             return nba_stats_map.get(int(value), cls.SHOT_MADE)
-        
+
         # Default fallback
         return cls.SHOT_MADE
 
 
 class EventSubtype(str, Enum):
     """Play-by-play event subtypes."""
+
     # Shot subtypes
     LAYUP = "LAYUP"
     DUNK = "DUNK"
@@ -269,18 +275,18 @@ class EventSubtype(str, Enum):
     CUTTING = "CUTTING"
     ALLEY_OOP = "ALLEY_OOP"
     TIP_SHOT = "TIP_SHOT"
-    
+
     # Free throw subtypes
     CLEAR_PATH = "CLEAR_PATH"
     FLAGRANT_1 = "FLAGRANT_1"
     FLAGRANT_2 = "FLAGRANT_2"
     TECHNICAL = "TECHNICAL"
-    
+
     # Timeout subtypes
     FULL_TIMEOUT = "FULL_TIMEOUT"
     SHORT_TIMEOUT = "SHORT_TIMEOUT"
     OFFICIAL_TIMEOUT = "OFFICIAL_TIMEOUT"
-    
+
     # Violation subtypes
     TRAVELING = "TRAVELING"
     DOUBLE_DRIBBLE = "DOUBLE_DRIBBLE"
@@ -295,6 +301,7 @@ class EventSubtype(str, Enum):
 
 class ShotResult(str, Enum):
     """Shot attempt result."""
+
     MADE = "MADE"
     MISSED = "MISSED"
     BLOCKED = "BLOCKED"
@@ -302,41 +309,42 @@ class ShotResult(str, Enum):
 
 class ShotType(str, Enum):
     """Shot type classification."""
+
     TWO_POINT = "2PT"
     THREE_POINT = "3PT"
     FREE_THROW = "FT"
-    
+
     @classmethod
-    def _missing_(cls, value: Any) -> 'ShotType':
+    def _missing_(cls, value: Any) -> "ShotType":
         """Handle missing values for shot types."""
         # Handle enum objects that were incorrectly passed as values
-        if hasattr(value, 'name'):
-            if 'THREE_POINT' in str(value) or '3PT' in str(value):
+        if hasattr(value, "name"):
+            if "THREE_POINT" in str(value) or "3PT" in str(value):
                 return cls.THREE_POINT
-            elif 'TWO_POINT' in str(value) or '2PT' in str(value):
+            elif "TWO_POINT" in str(value) or "2PT" in str(value):
                 return cls.TWO_POINT
-            elif 'FREE_THROW' in str(value) or 'FT' in str(value):
+            elif "FREE_THROW" in str(value) or "FT" in str(value):
                 return cls.FREE_THROW
-        
+
         # Handle string variations
         if isinstance(value, str):
             shot_str = value.upper().strip()
             shot_map = {
-                '2PT': cls.TWO_POINT,
-                '3PT': cls.THREE_POINT,
-                'FT': cls.FREE_THROW,
-                'TWO_POINT': cls.TWO_POINT,
-                'THREE_POINT': cls.THREE_POINT,
-                'FREE_THROW': cls.FREE_THROW,
-                'SHOTTYPE.TWO_POINT': cls.TWO_POINT,
-                'SHOTTYPE.THREE_POINT': cls.THREE_POINT,
-                'SHOTTYPE.FREE_THROW': cls.FREE_THROW,
-                '2': cls.TWO_POINT,
-                '3': cls.THREE_POINT,
-                'FREE': cls.FREE_THROW,
+                "2PT": cls.TWO_POINT,
+                "3PT": cls.THREE_POINT,
+                "FT": cls.FREE_THROW,
+                "TWO_POINT": cls.TWO_POINT,
+                "THREE_POINT": cls.THREE_POINT,
+                "FREE_THROW": cls.FREE_THROW,
+                "SHOTTYPE.TWO_POINT": cls.TWO_POINT,
+                "SHOTTYPE.THREE_POINT": cls.THREE_POINT,
+                "SHOTTYPE.FREE_THROW": cls.FREE_THROW,
+                "2": cls.TWO_POINT,
+                "3": cls.THREE_POINT,
+                "FREE": cls.FREE_THROW,
             }
             return shot_map.get(shot_str, cls.TWO_POINT)
-        
+
         # Handle integer inputs
         if isinstance(value, int):
             shot_map = {
@@ -345,12 +353,13 @@ class ShotType(str, Enum):
                 1: cls.FREE_THROW,  # Free throws might be coded as 1
             }
             return shot_map.get(value, cls.TWO_POINT)
-        
+
         return cls.TWO_POINT
 
 
 class ShotZone(str, Enum):
     """Shot zone classification."""
+
     RESTRICTED_AREA = "RESTRICTED_AREA"
     PAINT = "PAINT"
     MID_RANGE = "MID_RANGE"
@@ -362,6 +371,7 @@ class ShotZone(str, Enum):
 
 class FoulType(str, Enum):
     """Foul type classification."""
+
     PERSONAL = "PERSONAL"
     SHOOTING = "SHOOTING"
     OFFENSIVE = "OFFENSIVE"
@@ -377,6 +387,7 @@ class FoulType(str, Enum):
 
 class ReboundType(str, Enum):
     """Rebound type classification."""
+
     OFFENSIVE = "OFFENSIVE"
     DEFENSIVE = "DEFENSIVE"
     TEAM = "TEAM"
@@ -384,6 +395,7 @@ class ReboundType(str, Enum):
 
 class TurnoverType(str, Enum):
     """Turnover type classification."""
+
     BAD_PASS = "BAD_PASS"
     LOST_BALL = "LOST_BALL"
     TRAVELING = "TRAVELING"
@@ -402,6 +414,7 @@ class TurnoverType(str, Enum):
 
 class TimeoutType(str, Enum):
     """Timeout type classification."""
+
     FULL = "FULL"
     SHORT = "SHORT"
     OFFICIAL = "OFFICIAL"
@@ -410,15 +423,19 @@ class TimeoutType(str, Enum):
 
 class EarlyShockType(str, Enum):
     """Early shock event types."""
+
     TWO_PF_EARLY = "TWO_PF_EARLY"
     EARLY_FOUL_TROUBLE = "EARLY_FOUL_TROUBLE"
-    TECH = "TECH" 
+    TECH = "TECH"
     FLAGRANT = "FLAGRANT"
     INJURY_LEAVE = "INJURY_LEAVE"
+    EARLY_LEAD_CHANGES = "EARLY_LEAD_CHANGES"
+    POOR_START = "POOR_START"
 
 
 class Severity(str, Enum):
     """Event severity classification."""
+
     LOW = "LOW"
     MEDIUM = "MEDIUM"
     HIGH = "HIGH"
