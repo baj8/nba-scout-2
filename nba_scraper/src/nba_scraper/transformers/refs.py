@@ -3,7 +3,7 @@
 from typing import Any, Dict, List, Optional
 from datetime import datetime
 
-from . import BaseTransformer
+from .base import BaseTransformer
 from ..models.ref_rows import RefAssignmentRow
 
 

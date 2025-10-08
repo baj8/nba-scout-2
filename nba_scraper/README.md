@@ -2,6 +2,13 @@
 
 A production-grade data pipeline for fetching, normalizing, validating, and persisting NBA historical datasets with async IO, rate limiting, and comprehensive analytics derivation.
 
+## 📚 Documentation
+
+- **[DEV_NOTES.md](DEV_NOTES.md)** - Engineering rules, hardening policies, and development checklists
+- **[TROUBLESHOOTING.md](TROUBLESHOOTING.md)** - Common failures, diagnostics, and step-by-step fixes
+- **[MIGRATIONS_SETUP.md](MIGRATIONS_SETUP.md)** - Database migration procedures with Alembic
+- **[CONTRIBUTING.md](CONTRIBUTING.md)** - Contribution guidelines and code review process
+
 ## Dev quickstart
 
 ```bash
@@ -296,6 +303,229 @@ CACHE_ENABLE_HTTP_CACHE=true
    ```bash
    nba-scraper validate --since 2024-01-01
    ```
+
+---
+
+## 🚀 Common Tasks
+
+Ready-to-run commands for everyday workflows. See [examples/](examples/) for complete scripts.
+
+### Process Two Specific Games
+
+Perfect for testing, validation, or processing individual games:
+
+```bash
+# Fetch, transform, load, and derive analytics for 2 games
+nba-scraper fetch --games 0022300123,0022300124
+nba-scraper transform --game-ids 0022300123,0022300124
+nba-scraper load --game-ids 0022300123,0022300124
+nba-scraper derive --game-ids 0022300123,0022300124 --show
+
+# Or use the convenience script:
+cd examples && ./run_two_games.sh
+```
+
+### Daily Incremental Updates
+
+Run these daily to keep your database current:
+
+```bash
+# Process yesterday's games
+YESTERDAY=$(date -v-1d +%Y-%m-%d)  # On Linux: date -d "yesterday" +%Y-%m-%d
+TODAY=$(date +%Y-%m-%d)
+
+nba-scraper fetch --start-date $YESTERDAY --end-date $TODAY
+nba-scraper transform
+nba-scraper load
+nba-scraper derive
+```
+
+### Backfill Historical Data
+
+Load multiple seasons of historical data:
+
+```bash
+# Preview with dry run first
+nba-scraper backfill --seasons 2023-24 --dry-run
+
+# Run actual backfill
+nba-scraper backfill --seasons 2023-24
+
+# Backfill multiple seasons
+nba-scraper backfill --seasons 2021-22,2022-23,2023-24,2024-25
+
+# Backfill specific date range
+nba-scraper backfill --start-date 2024-01-01 --end-date 2024-01-31
+```
+
+### Data Exploration & Debugging
+
+View derived analytics and debug data issues:
+
+```bash
+# Show analytics in pretty tables
+nba-scraper derive --game-ids 0022300123 --show
+
+# Run with verbose logging
+nba-scraper --verbose fetch --games 0022300123
+
+# Preview operations without database writes
+nba-scraper --dry-run derive --game-ids 0022300123
+
+# Work offline with cached data
+nba-scraper --offline transform
+```
+
+### Performance Testing
+
+Benchmark your pipeline performance:
+
+```bash
+# Test with 10 games (adjust dates as needed)
+cd examples && ./bench_10_games.sh
+
+# Custom benchmark
+time nba-scraper fetch --start-date 2024-01-15 --end-date 2024-01-16
+time nba-scraper transform
+time nba-scraper load --batch-size 100
+time nba-scraper derive --metrics-only
+```
+
+### Data Quality Checks
+
+Verify data integrity and completeness:
+
+```bash
+# Check recent data
+nba-scraper derive --show
+
+# Validate specific games
+nba-scraper derive --game-ids 0022300123,0022300124 --show
+
+# Check database completeness (PostgreSQL)
+psql nba_scraper -c "
+  SELECT 
+    game_date_local,
+    COUNT(*) as games,
+    COUNT(DISTINCT game_id) as unique_ids,
+    SUM(CASE WHEN status = 'COMPLETED' THEN 1 ELSE 0 END) as completed
+  FROM games 
+  WHERE game_date_local >= CURRENT_DATE - INTERVAL '7 days'
+  GROUP BY game_date_local 
+  ORDER BY game_date_local DESC;
+"
+```
+
+### Retry Failed Operations
+
+Resume after errors or retry quarantined items:
+
+```bash
+# Retry failed games from previous backfill
+nba-scraper backfill --seasons 2023-24 --retry-quarantined
+
+# Force reprocess specific games
+nba-scraper fetch --games 0022300123 --force
+nba-scraper derive --game-ids 0022300123 --force
+```
+
+### Development & Testing
+
+Commands for local development:
+
+```bash
+# Test database connection
+python -c "
+import asyncio
+from nba_scraper.db import get_connection
+
+async def test():
+    conn = await get_connection()
+    print('✅ Database connected successfully')
+    await conn.close()
+
+asyncio.run(test())
+"
+
+# Check what's in raw cache
+ls -lh raw/
+
+# Inspect raw data
+cat raw/games/0022300123.json | jq .
+
+# Run full test suite
+pytest -v
+
+# Run with coverage
+pytest --cov=nba_scraper --cov-report=html
+```
+
+### Maintenance Tasks
+
+Keep your system healthy:
+
+```bash
+# Clean up old cache files (older than 7 days)
+find raw/ -type f -mtime +7 -delete
+
+# Vacuum database (PostgreSQL)
+psql nba_scraper -c "VACUUM ANALYZE;"
+
+# Check database size
+psql nba_scraper -c "
+  SELECT 
+    pg_size_pretty(pg_database_size('nba_scraper')) as total_size;
+"
+
+# Check table sizes
+psql nba_scraper -c "
+  SELECT 
+    tablename,
+    pg_size_pretty(pg_total_relation_size('public.'||tablename)) as size
+  FROM pg_tables 
+  WHERE schemaname = 'public' 
+  ORDER BY pg_total_relation_size('public.'||tablename) DESC 
+  LIMIT 10;
+"
+```
+
+### CI/CD Integration
+
+Add to your continuous integration:
+
+```bash
+# GitHub Actions example (.github/workflows/daily.yml)
+# See examples/README.md for complete workflow
+
+# Cron job example
+# Add to crontab: crontab -e
+0 5 * * * cd /path/to/nba_scraper && source .venv/bin/activate && \
+  nba-scraper fetch --start-date $(date -v-1d +\%Y-\%m-\%d) --end-date $(date +\%Y-\%m-\%d) && \
+  nba-scraper transform && nba-scraper load && nba-scraper derive \
+  >> logs/daily.log 2>&1
+```
+
+### Quick Reference
+
+| Task | Command |
+|------|---------|
+| Fetch 2 games | `nba-scraper fetch --games 0022300123,0022300124` |
+| Yesterday's games | `nba-scraper fetch --start-date $(date -v-1d +%Y-%m-%d) --end-date $(date +%Y-%m-%d)` |
+| Full season | `nba-scraper backfill --seasons 2023-24` |
+| Show analytics | `nba-scraper derive --show` |
+| Dry run mode | `nba-scraper --dry-run COMMAND` |
+| Verbose logging | `nba-scraper --verbose COMMAND` |
+| Offline mode | `nba-scraper --offline COMMAND` |
+| Help | `nba-scraper --help` or `nba-scraper COMMAND --help` |
+
+💡 **Pro Tips:**
+- Use `--dry-run` to preview operations before committing
+- Use `--verbose` to debug issues and see detailed logs
+- Use `--offline` during development to avoid API calls
+- Check [examples/](examples/) for complete runnable scripts
+- See [TROUBLESHOOTING.md](TROUBLESHOOTING.md) for common issues
+
+---
 
 ## Configuration
 
@@ -699,6 +929,228 @@ ORDER BY pg_total_relation_size(schemaname||'.'||tablename) DESC;
 3. Make changes and add tests
 4. Run the test suite: `pytest`
 5. Submit a pull request
+
+## Releasing
+
+### Release Process
+
+The project uses automated release workflows triggered by Git tags. When you push a version tag, GitHub Actions will:
+
+1. **Build Python wheel** from source
+2. **Publish to PyPI** (when `PYPI_TOKEN` secret is configured)
+3. **Build and push Docker image** to GitHub Container Registry (ghcr.io)
+4. **Create GitHub Release** with changelog and artifacts
+
+### Version Bumping
+
+1. **Update version in `src/nba_scraper/version.py`**:
+   ```python
+   __version__ = "1.0.2"  # Bump from 1.0.1
+   ```
+
+2. **Update CHANGELOG.md** with release notes:
+   ```markdown
+   ## [1.0.2] - 2025-10-08
+   
+   ### Added
+   - New feature X
+   
+   ### Fixed
+   - Bug fix Y
+   
+   ### Changed
+   - Improvement Z
+   ```
+
+3. **Commit the changes**:
+   ```bash
+   git add src/nba_scraper/version.py CHANGELOG.md
+   git commit -m "chore: bump version to 1.0.2"
+   ```
+
+4. **Create and push the tag**:
+   ```bash
+   git tag v1.0.2
+   git push origin main
+   git push origin v1.0.2
+   ```
+
+5. **Monitor the release workflow**:
+   - Go to GitHub Actions tab in your repository
+   - Watch the "Release" workflow progress
+   - Verify artifacts are published to PyPI and GHCR
+
+### Semantic Versioning
+
+Follow [Semantic Versioning](https://semver.org/) (MAJOR.MINOR.PATCH):
+
+- **MAJOR** (v2.0.0): Breaking API changes
+- **MINOR** (v1.1.0): New features, backward compatible
+- **PATCH** (v1.0.1): Bug fixes, backward compatible
+
+**Pre-release versions**:
+- **Alpha**: `v1.1.0-alpha.1` (early development, unstable)
+- **Beta**: `v1.1.0-beta.1` (feature complete, testing phase)
+- **RC**: `v1.1.0-rc.1` (release candidate, near production)
+
+### PyPI Configuration
+
+**Option 1: Trusted Publishing (Recommended)**
+
+Set up [PyPI Trusted Publishing](https://docs.pypi.org/trusted-publishers/) to publish without API tokens:
+
+1. Go to PyPI project settings
+2. Add GitHub Actions as a trusted publisher
+3. Configure: `your-org/nba-scraper` repository, `release.yml` workflow
+4. Set repository variable: `ENABLE_PYPI_PUBLISH=true`
+
+**Option 2: API Token**
+
+If trusted publishing isn't available:
+
+1. Generate PyPI API token at https://pypi.org/manage/account/token/
+2. Add as GitHub repository secret: `PYPI_TOKEN`
+3. Set repository variable: `ENABLE_PYPI_PUBLISH=true`
+
+### Docker Image Tags
+
+The release workflow automatically creates multiple Docker tags:
+
+- `ghcr.io/your-org/nba-scraper:1.0.2` (specific version)
+- `ghcr.io/your-org/nba-scraper:1.0` (minor version)
+- `ghcr.io/your-org/nba-scraper:1` (major version)
+- `ghcr.io/your-org/nba-scraper:latest` (latest stable release)
+
+Pre-releases (alpha/beta/rc) are marked as "prerelease" on GitHub and do not update the `latest` tag.
+
+### Local Testing Before Release
+
+**Test wheel building**:
+```bash
+# Build wheel locally
+python -m build
+
+# Install in clean virtualenv
+python -m venv test_venv
+source test_venv/bin/activate
+pip install dist/nba_scraper-1.0.2-py3-none-any.whl
+
+# Test CLI
+nba-scraper --help
+nba-scraper status
+
+# Cleanup
+deactivate
+rm -rf test_venv dist build
+```
+
+**Test Docker image**:
+```bash
+# Build image locally (simulating CI)
+docker build -t nba-scraper:test \
+  --build-arg VERSION=1.0.2-test \
+  --build-arg BUILD_DATE=$(date -u +'%Y-%m-%dT%H:%M:%SZ') \
+  --build-arg VCS_REF=$(git rev-parse --short HEAD) \
+  .
+
+# Test container
+docker run --rm nba-scraper:test --help
+docker run --rm nba-scraper:test --version
+
+# Test with environment variables
+docker run --rm \
+  -e DATABASE_URL=postgresql://localhost/nba_scraper \
+  nba-scraper:test status
+
+# Cleanup
+docker rmi nba-scraper:test
+```
+
+### Release Checklist
+
+Before creating a release tag:
+
+- [ ] All tests passing: `pytest`
+- [ ] Linting clean: `ruff check .`
+- [ ] Type checking clean: `mypy src`
+- [ ] Version bumped in `src/nba_scraper/version.py`
+- [ ] CHANGELOG.md updated with release notes
+- [ ] Local wheel build works: `python -m build`
+- [ ] Local Docker build works: `docker build .`
+- [ ] Documentation updated (if API changed)
+- [ ] Migration guide provided (if breaking changes)
+
+After pushing the tag:
+
+- [ ] GitHub Actions workflow completes successfully
+- [ ] PyPI package published (if configured)
+- [ ] Docker image available on GHCR
+- [ ] GitHub Release created with artifacts
+- [ ] Release announcement (if major version)
+
+### Hotfix Releases
+
+For urgent production fixes:
+
+1. Create hotfix branch from the tag:
+   ```bash
+   git checkout -b hotfix/1.0.3 v1.0.2
+   ```
+
+2. Apply the fix and update version:
+   ```bash
+   # Fix the bug
+   vim src/nba_scraper/...
+   
+   # Update version
+   vim src/nba_scraper/version.py  # Change to 1.0.3
+   
+   # Commit
+   git add .
+   git commit -m "fix: critical bug in X"
+   ```
+
+3. Tag and push:
+   ```bash
+   git tag v1.0.3
+   git push origin hotfix/1.0.3
+   git push origin v1.0.3
+   ```
+
+4. Merge back to main:
+   ```bash
+   git checkout main
+   git merge hotfix/1.0.3
+   git push origin main
+   ```
+
+### Rollback Procedure
+
+If a release has critical issues:
+
+1. **Delete the PyPI release** (not possible - PyPI doesn't allow deletions)
+   - Instead, publish a new patch version with the fix
+
+2. **Mark Docker images as deprecated**:
+   ```bash
+   # Pull and retag as deprecated
+   docker pull ghcr.io/your-org/nba-scraper:1.0.2
+   docker tag ghcr.io/your-org/nba-scraper:1.0.2 \
+              ghcr.io/your-org/nba-scraper:1.0.2-deprecated
+   ```
+
+3. **Mark GitHub Release as pre-release**:
+   - Go to GitHub Releases
+   - Edit the release
+   - Check "Set as a pre-release"
+   - Add warning to release notes
+
+4. **Publish fixed version immediately**:
+   ```bash
+   # Fix and release patch
+   git tag v1.0.3
+   git push origin v1.0.3
+   ```
 
 ## License
 

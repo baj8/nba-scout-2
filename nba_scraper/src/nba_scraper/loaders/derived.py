@@ -273,8 +273,53 @@ class DerivedLoader:
             logger.error(error_msg)
             raise ValueError(error_msg)
 
+        # Step 1.5: Completeness validation - filter out incomplete games
+        complete_rows = []
+        for row in valid_rows:
+            game_id = row.get("game_id")
+            if not game_id:
+                continue
+                
+            # Import here to avoid circular imports
+            from ..quality.completeness import game_is_complete, get_skip_reason_description
+            
+            try:
+                is_complete, reasons = await game_is_complete(game_id)
+                if is_complete:
+                    complete_rows.append(row)
+                else:
+                    # Log structured skip with reasons
+                    for reason in reasons:
+                        logger.info(
+                            "derived_loader.skip",
+                            extra={
+                                "game_id": game_id,
+                                "reason": reason,
+                                "table": table_name,
+                                "description": get_skip_reason_description(reason)
+                            }
+                        )
+            except Exception as e:
+                logger.warning(
+                    "Completeness check failed, proceeding with caution",
+                    game_id=game_id,
+                    error=str(e)
+                )
+                complete_rows.append(row)  # Include row if completeness check fails
+
+        if not complete_rows:
+            logger.info(f"No complete games found for {table_name}")
+            return 0
+        
+        logger.info(
+            f"Completeness filtering for {table_name}",
+            original_count=len(valid_rows),
+            complete_count=len(complete_rows),
+            filtered_count=len(valid_rows) - len(complete_rows)
+        )
+
         # Step 2: FK validation (if validator available)
-        validated_rows, fk_warnings = await self._validate_foreign_keys(valid_rows, table_name)
+        validated_rows, fk_warnings = await self._validate_foreign_keys(complete_rows, table_name)
         if not validated_rows:
             logger.warning(f"No valid records after FK validation for {table_name}")
             return 0
@@ -322,8 +367,53 @@ class DerivedLoader:
             logger.error(error_msg)
             raise ValueError(error_msg)
 
+        # Step 1.5: Completeness validation - filter out incomplete games
+        complete_rows = []
+        for row in valid_rows:
+            game_id = row.get("game_id")
+            if not game_id:
+                continue
+                
+            # Import here to avoid circular imports
+            from ..quality.completeness import game_is_complete, get_skip_reason_description
+            
+            try:
+                is_complete, reasons = await game_is_complete(game_id)
+                if is_complete:
+                    complete_rows.append(row)
+                else:
+                    # Log structured skip with reasons
+                    for reason in reasons:
+                        logger.info(
+                            "derived_loader.skip",
+                            extra={
+                                "game_id": game_id,
+                                "reason": reason,
+                                "table": table_name,
+                                "description": get_skip_reason_description(reason)
+                            }
+                        )
+            except Exception as e:
+                logger.warning(
+                    "Completeness check failed, proceeding with caution",
+                    game_id=game_id,
+                    error=str(e)
+                )
+                complete_rows.append(row)  # Include row if completeness check fails
+
+        if not complete_rows:
+            logger.info(f"No complete games found for {table_name}")
+            return 0
+        
+        logger.info(
+            f"Completeness filtering for {table_name}",
+            original_count=len(valid_rows),
+            complete_count=len(complete_rows),
+            filtered_count=len(valid_rows) - len(complete_rows)
+        )
+
         # Step 2: FK validation (if validator available)
-        validated_rows, fk_warnings = await self._validate_foreign_keys(valid_rows, table_name)
+        validated_rows, fk_warnings = await self._validate_foreign_keys(complete_rows, table_name)
         if not validated_rows:
             logger.warning(f"No valid records after FK validation for {table_name}")
             return 0

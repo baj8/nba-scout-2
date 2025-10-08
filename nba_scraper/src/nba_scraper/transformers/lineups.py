@@ -1,7 +1,8 @@
-"""Lineup transformation functions - pure, synchronous."""
+"""Lineup data transformers."""
 
 from typing import Any, Dict, List
 
+from .base import BaseTransformer
 from ..models.lineups import LineupStint
 from ..utils.coerce import to_int_or_none
 from ..utils.preprocess import normalize_team_id, preprocess_nba_stats_data

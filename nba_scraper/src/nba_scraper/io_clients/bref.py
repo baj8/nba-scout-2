@@ -9,8 +9,8 @@ from bs4 import BeautifulSoup
 from selectolax.parser import HTMLParser
 
 from ..config import get_settings
-from ..http import get
 from ..nba_logging import get_logger
+from .http import HttpClient
 
 logger = get_logger(__name__)
 
@@ -22,6 +22,42 @@ class BRefClient:
         """Initialize Basketball Reference client."""
         self.settings = get_settings()
         self.base_url = self.settings.bref_base_url
+        
+        # Initialize HTTP client
+        self.http_client = HttpClient()
+        
+        # Headers for Basketball Reference requests
+        self.headers = {
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+            'Accept-Language': 'en-US,en;q=0.5',
+            'Accept-Encoding': 'gzip, deflate',
+            'Connection': 'keep-alive',
+            'Upgrade-Insecure-Requests': '1',
+        }
+
+    async def _make_request(self, url: str) -> str:
+        """Make HTTP request using HTTP client.
+        
+        Args:
+            url: Request URL
+            
+        Returns:
+            HTML response text
+        """
+        try:
+            response = await self.http_client.get(url, headers=self.headers)
+            
+            # Convert response to string if it's bytes
+            if isinstance(response, bytes):
+                return response.decode('utf-8')
+            elif isinstance(response, str):
+                return response
+            else:
+                return str(response)
+            
+        except Exception as e:
+            logger.error(f"Basketball Reference request failed: {e}", url=url)
+            raise
 
     def _safe_preprocess_data(self, data: Any) -> Any:
         """Safely preprocess data to prevent int/str comparison errors.
@@ -65,8 +101,7 @@ class BRefClient:
         try:
             logger.info("Fetching B-Ref boxscore", bref_game_id=bref_game_id, url=url)
             
-            response = await get(url)
-            html_content = response.text
+            html_content = await self._make_request(url)
             
             logger.info("Fetched B-Ref boxscore", 
                        bref_game_id=bref_game_id, 
@@ -126,8 +161,7 @@ class BRefClient:
             logger.info("Fetching B-Ref schedule", 
                        team=team_tricode, season=season, url=url)
             
-            response = await get(url)
-            html_content = response.text
+            html_content = await self._make_request(url)
             
             logger.info("Fetched B-Ref schedule", 
                        team=team_tricode, season=season,

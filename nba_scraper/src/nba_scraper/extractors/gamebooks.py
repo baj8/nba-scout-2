@@ -5,6 +5,7 @@ from typing import Any, Dict, List, Optional, Union
 from ..models.enums import RefRole
 from ..models.ref_rows import RefAlternateRow, RefAssignmentRow
 from ..nba_logging import get_logger
+from ..alerts import notify_schema_drift
 
 logger = get_logger(__name__)
 
@@ -73,10 +74,21 @@ def _normalize_header(raw_header: str) -> Optional[str]:
     if not raw_header:
         return None
 
-    canon = COLUMN_ALIASES.get(raw_header.strip().upper())
+    header_upper = raw_header.strip().upper()
+    canon = COLUMN_ALIASES.get(header_upper)
     if not canon:
+        # Schema drift detection: unknown PDF column header
         logger.debug(
-            "Unknown header dropped", raw_header=raw_header, extra={"gamebook_parsing": True}
+            "Unknown header dropped", 
+            raw_header=raw_header, 
+            extra={"gamebook_parsing": True}
+        )
+        # Log schema drift for monitoring
+        notify_schema_drift(
+            field="pdf_column_header",
+            value=raw_header,
+            source="gamebook_pdf",
+            expected_values=list(COLUMN_ALIASES.keys())
         )
         return None
 
@@ -594,27 +606,43 @@ def _map_role_string_to_enum(role_str: str) -> RefRole:
     normalized = role_str.strip().lower()
 
     # Map case-insensitive text labels to RefRole enum
-    if normalized == "crew chief":
-        return RefRole.CREW_CHIEF
-    elif normalized == "referee":
-        return RefRole.REFEREE
-    elif normalized == "umpire":
-        return RefRole.UMPIRE
-    elif normalized in ["official", "official_1", "official_2", "official_3"]:
-        return RefRole.REFEREE  # Map officials to REFEREE as tests expect
+    role_text_map = {
+        "crew chief": RefRole.CREW_CHIEF,
+        "referee": RefRole.REFEREE,
+        "umpire": RefRole.UMPIRE,
+        "official": RefRole.REFEREE,
+        "official_1": RefRole.REFEREE,
+        "official_2": RefRole.REFEREE,
+        "official_3": RefRole.REFEREE,
+    }
+    
+    if normalized in role_text_map:
+        return role_text_map[normalized]
 
     # Fallback for uppercase enum-style strings
     role_mapping = {
         "CREW_CHIEF": RefRole.CREW_CHIEF,
         "REFEREE": RefRole.REFEREE,
         "UMPIRE": RefRole.UMPIRE,
-        "OFFICIAL": RefRole.REFEREE,  # Changed default mapping
+        "OFFICIAL": RefRole.REFEREE,
         "OFFICIAL_1": RefRole.REFEREE,
         "OFFICIAL_2": RefRole.REFEREE,
         "OFFICIAL_3": RefRole.REFEREE,
     }
-
-    return role_mapping.get(role_str.upper(), RefRole.REFEREE)
+    
+    mapped_role = role_mapping.get(role_str.upper())
+    if mapped_role:
+        return mapped_role
+    
+    # Unknown role - log schema drift
+    notify_schema_drift(
+        field="referee_role",
+        value=role_str,
+        source="gamebook_pdf",
+        expected_values=list(role_text_map.keys()) + list(role_mapping.keys())
+    )
+    
+    return RefRole.REFEREE
 
 
 def _create_name_slug(name: str) -> str:

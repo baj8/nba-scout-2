@@ -8,6 +8,48 @@ from typing_extensions import Annotated
 
 app = typer.Typer(help="NBA data scraping and processing CLI")
 
+# Create scheduler subcommand
+schedule_app = typer.Typer(name="schedule", help="Scheduled jobs for daily and backfill operations")
+
+@schedule_app.command("daily")
+def schedule_daily() -> None:
+    """
+    Run daily ingestion job for yesterday's games (America/New_York timezone).
+    
+    Discovers games from yesterday, runs full pipeline, and updates watermark.
+    Idempotent and resumable.
+    
+    Example:
+        nba-scraper schedule daily
+    """
+    from nba_scraper.schedule.jobs import run_daily
+    raise SystemExit(run_daily())
+
+
+@schedule_app.command("backfill")
+def schedule_backfill(
+    season: Annotated[str, typer.Option(help="Season to backfill (e.g., '2024-25')")],
+    since: Annotated[Optional[str], typer.Option(help="Resume from specific game ID")] = None,
+    chunk_days: Annotated[int, typer.Option(help="Days per chunk")] = 7,
+) -> None:
+    """
+    Run backfill job for a season with resumable watermarks.
+    
+    Processes games in date chunks, updates watermark after each chunk.
+    Automatically resumes from last watermark on restart.
+    
+    Examples:
+        nba-scraper schedule backfill --season 2024-25
+        nba-scraper schedule backfill --season 2024-25 --since 0022400001
+        nba-scraper schedule backfill --season 2024-25 --chunk-days 7
+    """
+    from nba_scraper.schedule.jobs import run_backfill
+    raise SystemExit(run_backfill(season=season, since_game_id=since, chunk_days=chunk_days))
+
+
+# Register scheduler subcommand
+app.add_typer(schedule_app)
+
 @app.command()
 def backfill(
     seasons: Annotated[str, typer.Option(help="Comma-separated seasons (e.g., '2021-22,2022-23')")] = "2021-22,2022-23,2023-24,2024-25",

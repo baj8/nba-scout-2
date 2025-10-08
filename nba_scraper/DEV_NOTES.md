@@ -1,529 +1,1200 @@
-# NBA Scraper Development Notes
+# NBA Scraper Engineering Documentation
 
-## CURRENT TASK
-**Live API integration testing** - Create integration tests for NBA Stats API, BRef scraping, and gamebook downloads with proper mocking.
-- Files: `tests/integration/test_live_api.py`
-- Status: NEXT
-- Goal: Comprehensive integration test suite for API clients with realistic mocking and error handling
+**Last Updated**: October 8, 2025  
+**Maintainers**: Data Engineering Team  
+**Status**: Production
 
-## Project Overview
-
-This is a production-grade NBA Historical Scraping & Ingestion Engine that fetches, normalizes, validates, and persists NBA historical datasets. It's built with async-first architecture, comprehensive rate limiting, and multi-source data integration.
-
-## 🔒 STRICT REPOSITORY VALIDATION RULES
-
-**These rules are MANDATORY and must be enforced in ALL code changes:**
-
-### Game ID Validation
-- **Format**: Must be exactly 10 characters, numeric, starts with "0022" (regular season)
-- **Examples**: ✅ `"0022301234"` ❌ `"0012301234"` (wrong prefix) ❌ `"002230123"` (too short)
-- **Error Handling**: If invalid → `raise ValueError(f"invalid game_id: {game_id}")`
-- **Implementation**: Use regex `^0022\d{6}$` in `transform_game()`
-
-### Season Validation  
-- **Format**: Accept only "YYYY-YY" format (e.g., "2024-25")
-- **Error Handling**: If invalid/missing → `logger.warning("season format invalid: {season}")`
-- **Fallback**: Always use `derive_season_smart()` for automatic derivation
-- **Return**: Always return as string, never fail processing
-
-### Pipeline Integration Rules
-- **Critical Failures**: Game ID validation failures → raise `ValueError`
-- **Foundation Pipeline**: Must catch validation errors and set `game_processed=False`
-- **Non-Critical Issues**: Bad season formats → log warning (not error), continue processing
-- **Continuation**: Pipeline MUST continue PBP + lineups even if game metadata fails
-- **Error Aggregation**: Collect all errors in `result["errors"]` list
-
-### Logging Requirements
-- **Logger**: Always use `logging.getLogger(__name__)`
-- **Context**: Include game_id, season, error type in all log messages
-- **Levels**: Critical validation → ERROR, format issues → WARNING
-- **Format**: Structured logging with trace context
-
-### Testing Requirements
-- **Coverage**: ALL validation errors must have unit test coverage
-- **Game Transformer Tests**: Must pass strict validation rules (22/22 tests)
-- **Foundation Pipeline Tests**: Must handle validation errors gracefully (8/8 tests)
-- **Guardrail Tests**: Ensure preprocessing never strips leading zeros from game IDs
-- **Integration**: Test continuation of PBP/lineups after game validation failures
-
-### Repository Hardening
-- **CI Pipeline**: Must run pytest + ruff + mypy on all PRs
-- **Pre-commit Hooks**: Enforce style/type checks before commits
-- **PR Template**: Requires validation checklist completion
-- **Version Control**: All validation rule changes require version bump
-
-### Code Examples
-
-**✅ CORRECT Game ID Validation:**
-```python
-import re
-import logging
-
-logger = logging.getLogger(__name__)
-
-def transform_game(game_data: dict) -> Game:
-    game_id = str(game_data.get("game_id", ""))
-    
-    # Strict validation - exactly 10 chars, numeric, starts with "0022"
-    if not re.match(r"^0022\d{6}$", game_id):
-        raise ValueError(f"invalid game_id: {game_id!r} - must be 10-char string matching ^0022\\d{{6}}$")
-    
-    # Season validation with fallback
-    season = str(game_data.get("season", ""))
-    if not re.match(r"^\d{4}-\d{2}$", season):
-        logger.warning("season format invalid: %s - expected YYYY-YY format", season, 
-                      extra={"game_id": game_id, "invalid_season": season})
-        season = derive_season_smart(game_id, game_data.get("game_date"), season)
-    
-    return Game(game_id=game_id, season=season, ...)
-```
-
-**✅ CORRECT Pipeline Error Handling:**
-```python
-async def process_game(self, game_id: str) -> dict:
-    results = {"game_id": game_id, "game_processed": False, "errors": []}
-    
-    try:
-        game_meta = extract_game_from_boxscore(boxscore_resp)
-        game_model = transform_game(game_meta)  # Can raise ValueError
-        await upsert_game(conn, game_model)
-        results["game_processed"] = True
-    except ValueError as e:
-        error_msg = f"Game metadata validation failed: {e}"
-        results["errors"].append(error_msg)
-        logger.error(error_msg, game_id=game_id, exc_info=True)
-        # DON'T return early - continue with PBP processing
-    
-    # Continue PBP processing even if game validation failed
-    try:
-        pbp_events = process_pbp(game_id)
-        results["pbp_events_processed"] = len(pbp_events)
-    except Exception as e:
-        results["errors"].append(f"PBP processing failed: {e}")
-    
-    return results
-```
-
-**❌ WRONG - Don't Do This:**
-```python
-# DON'T: Lenient game ID validation
-if len(game_id) < 8:  # Too lenient!
-    
-# DON'T: Fail on season format issues  
-if not season_valid:
-    raise ValueError("Bad season")  # Should warn + fallback!
-    
-# DON'T: Stop processing on validation errors
-if validation_error:
-    return {"error": "Failed"}  # Should continue PBP/lineups!
-```
-
-# Executive Summary
-
-This repository powers an async-first NBA data pipeline with strict validation rules to ensure data integrity and production readiness.  
-The goal of this DEV_NOTES file is to give engineers a single source of truth for how to contribute safely, efficiently, and consistently.  
-
-At the heart of this project is the **strict validation system**: every game, season, and pipeline event must meet exact rules before entering the database.  
-This protects against silent data corruption and guarantees downstream analytics reliability.
+This document contains critical engineering rules, data handling policies, and development checklists for the NBA Scraper project. All contributors must follow these guidelines to maintain data integrity and system reliability.
 
 ---
 
-## 🔒 Strict Validation Rules (Refined)
+## Table of Contents
 
-- **Game ID Validation**
-  - ✅ Must be exactly 10 characters
-  - ✅ Must be numeric
-  - ✅ Must start with `0022` (regular season format)
-  - ❌ Wrong: `"22301234"`, `"game1"`
+1. [Timezone Handling Policy](#timezone-handling-policy)
+2. [Status Normalization](#status-normalization)
+3. [Season Rules & Validation](#season-rules--validation)
+4. [Team Alias Management](#team-alias-management)
+5. [Performance & Benchmarking](#performance--benchmarking)
+6. [Adding Derived Windows](#adding-derived-windows)
+7. [Data Quality Checks](#data-quality-checks)
+8. [Development Checklists](#development-checklists)
 
-- **Season Validation**
-  - ✅ Accept only `"YYYY-YY"` format (e.g. `"2024-25"`)
-  - ⚠️ Invalid formats (e.g. `"2024"`, `"2024-2025"`, `"24-25"`) will log a warning and fall back to `derive_season_smart()`
+---
 
-- **Pipeline Integration Rules**
-  - Critical failures → `ValueError` raised  
-  - Non-critical issues → logged as warnings but pipeline continues
+## Timezone Handling Policy
 
-- **Logging Requirements**
-  - Use `logging.getLogger(__name__)`  
-  - Always include game_id/season context in log messages
+### Core Principle
+**All timestamps are stored in UTC with venue timezone preserved for local time derivation.**
 
-- **Testing Requirements**
-  - Every validation error path must have at least one unit test
-  - Edge cases (bad game_id, malformed season) must be covered
+### Implementation Rules
 
-- **Repository Hardening**
-  - CI must run: `pytest --maxfail=1 -q`, `ruff check .`, and `mypy .`
+#### 1. Venue Timezone Resolution
+```python
+# venues.csv lookup (primary source)
+venue_tz = get_venue_timezone(arena_name, home_team_tricode)
 
-### Key Technologies
-- **Python 3.11+** with async/await
-- **PostgreSQL 12+** with asyncpg driver
-- **httpx** for async HTTP requests
-- **Pydantic** for data validation
-- **SQLAlchemy** for database operations
-- **Typer** for CLI interface
-- **Rich** for beautiful terminal output
+# Fallback hierarchy:
+# 1. Team home timezone from team_aliases.yaml
+# 2. Eastern Time (league headquarters default)
+# 3. UTC (absolute fallback)
 
-## Architecture Overview
-
-```
-┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
-│   Data Sources  │    │   Transformation │    │    PostgreSQL   │
-├─────────────────┤    ├──────────────────┤    ├─────────────────┤
-│ NBA Stats API   │───▶│ Pydantic Models  │───▶│ Core Tables     │
-│ Basketball Ref  │    │ Rate Limiting    │    │ Derived Tables  │
-│ NBA Game Books  │    │ Normalization    │    │ Indexes & FKs   │
-└─────────────────┘    └──────────────────┘    └─────────────────┘
+if venue_tz is None:
+    venue_tz = get_team_home_timezone(home_team_tricode)
+if venue_tz is None:
+    logger.warning("No timezone found, using ET fallback", 
+                   game_id=game_id, team=home_team_tricode)
+    venue_tz = "America/New_York"  # ET fallback
 ```
 
-### Core Components
+#### 2. Timestamp Storage Pattern
+```python
+from datetime import datetime, timezone
+import pytz
 
-1. **Extractors** (`src/nba_scraper/extractors/`) - Pure functions for data extraction
-2. **IO Clients** (`src/nba_scraper/io_clients/`) - HTTP clients for each data source
-3. **Transformers** (`src/nba_scraper/transformers/`) - Data transformation logic
-4. **Loaders** (`src/nba_scraper/loaders/`) - Database upsert operations
-5. **Pipelines** (`src/nba_scraper/pipelines/`) - Orchestration workflows
-6. **Models** (`src/nba_scraper/models/`) - Pydantic data models
+# ALWAYS store in UTC
+game_date_utc: datetime = datetime.now(timezone.utc)
 
-## Development Setup
+# Preserve arena timezone string
+arena_tz: str = "America/Los_Angeles"  # IANA timezone name
 
-### Prerequisites
-```bash
-# Python 3.11+
-python --version
-
-# PostgreSQL 12+
-psql --version
-
-# Git
-git --version
+# Derive local date for joins/analytics
+arena_tz_obj = pytz.timezone(arena_tz)
+game_date_local: date = game_date_utc.astimezone(arena_tz_obj).date()
 ```
 
-### Initial Setup
-```bash
-# Clone and navigate
-git clone <repository-url>
-cd nba_scraper
-
-# Install dependencies (recommended: uv)
-pip install uv
-uv sync
-
-# Alternative: pip
-pip install -e ".[dev]"
-
-# Environment setup
-cp .env.example .env
-# Edit .env with your database credentials
-
-# Database setup
-createdb nba_scraper
-psql nba_scraper < schema.sql
-```
-
-### Development Workflow
-
-#### Code Quality Tools
-```bash
-# Format code
-ruff format
-
-# Lint code
-ruff check
-
-# Type checking
-mypy src/nba_scraper
-
-# Run all quality checks
-ruff format && ruff check && mypy src/nba_scraper
-```
-
-#### Testing
-```bash
-# Run all tests
-pytest
-
-# Run with coverage
-pytest --cov=nba_scraper
-
-# Run specific test types
-pytest tests/unit/
-pytest tests/integration/
-pytest -k validation
-
-# Verbose output
-pytest -v
-```
-
-## Key Conventions & Patterns
-
-### Async-First Architecture
-- All IO operations use `asyncio` and `httpx`
-- Rate limiting with token bucket (45 req/min)
-- Exponential backoff on errors
-- Streaming parsers to avoid memory issues
-
-### Data Normalization
-- **Team tricodes**: Normalized via `team_aliases.yaml`, always uppercase
-- **Player names**: PascalCase slugs (e.g., "LeBron James" → "LebronJames")
-- **Timestamps**: All stored in UTC, arena timezone preserved
-- **Enums**: Strict validation for event types, injury status, referee roles
-
-### Database Patterns
-- **Idempotent upserts**: `ON CONFLICT DO UPDATE SET ... WHERE excluded.col IS DISTINCT FROM target.col`
-- **Provenance**: Every table has `source`, `source_url`, and `ingested_at_utc` columns
-- **Natural PKs**: Composite keys using business identifiers
-- **Foreign Keys**: Referential integrity with cascade deletes
-
-### Code Style
-- Type hints everywhere
-- Pure functions for extractors and transformers
-- Async context managers for resources
-- Rich CLI with progress bars
-- Defensive parsing with fallbacks and logging
-- Structured logging with trace IDs
-
-## Core Data Tables
-
-### Primary Tables
-- `games` - Game metadata with arena timezones
-- `game_id_crosswalk` - ID mapping between data sources
-- `ref_assignments` & `ref_alternates` - Referee crew information
-- `starting_lineups` & `injury_status` - Player availability
-- `pbp_events` - Normalized play-by-play with enrichment
-
-### Derived Analytics Tables
-- `q1_window_12_8` - First quarter analytics (12:00-8:00)
-- `early_shocks` - Disruption events (fouls, technicals, injuries)
-- `schedule_travel` - Travel fatigue and circadian metrics
-- `outcomes` - Final scores and quarter breakdowns
-
-## CLI Commands Reference
-
-### Development & Testing
-```bash
-# Check system status
-nba-scraper status
-
-# Test with single day
-nba-scraper daily --date-range 2024-01-15
-
-# Validate data quality
-nba-scraper validate --since 2024-01-01 --verbose
-```
-
-### Data Pipeline Operations
-```bash
-# Backfill historical data
-nba-scraper backfill --seasons 2023-24 --dry-run
-nba-scraper backfill --seasons 2023-24
-
-# Daily incremental ingestion
-nba-scraper daily
-nba-scraper daily --date-range 2024-01-15..2024-01-20
-
-# Derive analytics
-nba-scraper derive --date-range 2024-01-01..2024-01-31
-nba-scraper derive --date-range 2024-01-15 --tables q1_window,outcomes --force
-```
-
-## Configuration
-
-### Environment Variables (.env)
-```bash
-# Database
-DATABASE_URL=postgresql+asyncpg://user:password@localhost:5432/nba_scraper
-
-# HTTP Client
-USER_AGENT=Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36
-REQUESTS_PER_MIN=45
-RETRY_MAX=5
-
-# Logging
-LOG_LEVEL=INFO
-LOG_FORMAT=json
-
-# Pipeline
-MAX_CONCURRENT_REQUESTS=5
-BACKFILL_CHUNK_SIZE=10
-CHECKPOINT_ENABLED=true
-```
-
-### Key Configuration Files
-- `team_aliases.yaml` - Team tricode normalization mapping
-- `venues.csv` - Arena coordinates and timezones
-- `schema.sql` - Complete PostgreSQL DDL
-- `pyproject.toml` - Project dependencies and tools
-
-## Common Development Tasks
-
-### Adding New Data Sources
-1. Create client in `io_clients/`
-2. Add extraction functions in `extractors/`
-3. Create/update Pydantic models in `models/`
-4. Add transformation logic in `transformers/`
-5. Update database loader in `loaders/`
-6. Add tests with golden files
-
-### Adding New Analytics
-1. Define derived table in `schema.sql`
-2. Create transformation logic in `transformers/`
-3. Add loader function in `loaders/derived.py`
-4. Update analytics pipeline
-5. Add validation tests
-
-### Debugging Data Issues
-```bash
-# Check recent games
-psql nba_scraper -c "SELECT * FROM games WHERE game_date_local >= CURRENT_DATE - INTERVAL '7 days';"
-
-# Validate data completeness
-psql nba_scraper -c "SELECT COUNT(*) FROM pbp_events WHERE game_id = 'specific_game_id';"
-
-# Check for duplicates
-psql nba_scraper -c "SELECT game_id, COUNT(*) FROM games GROUP BY game_id HAVING COUNT(*) > 1;"
-```
-
-## Troubleshooting Guide
-
-### Common Issues
-
-#### Database Connection Failed
-```bash
-# Check PostgreSQL status
-pg_ctl status
-
-# Test connection
-psql nba_scraper -c "SELECT 1"
-
-# Verify environment
-echo $DATABASE_URL
-```
-
-#### Rate Limit Errors
-```bash
-# Check rate limit setting
-grep REQUESTS_PER_MIN .env
-
-# Monitor in logs
-nba-scraper daily --date-range 2024-01-15 | grep "rate_limit"
-```
-
-#### Memory Issues
-```bash
-# Reduce batch sizes
-export BACKFILL_CHUNK_SIZE=5
-export MAX_CONCURRENT_REQUESTS=2
-
-# Process smaller chunks
-nba-scraper backfill --seasons 2023-24
-```
-
-#### Missing Dependencies
-```bash
-# Reinstall with dev dependencies
-pip install -e ".[dev]"
-
-# macOS: Install PostgreSQL client
-brew install postgresql
-```
-
-### Data Quality Issues
-
-#### Duplicate Detection
+#### 3. Database Schema Pattern
 ```sql
--- Check for duplicate games
-SELECT game_id, COUNT(*) 
+-- Every time-based table follows this pattern:
+CREATE TABLE games (
+    game_id TEXT PRIMARY KEY,
+    game_date_utc TIMESTAMPTZ NOT NULL,    -- Always UTC
+    game_date_local DATE NOT NULL,          -- Arena local date for joins
+    arena_tz TEXT NOT NULL,                 -- IANA timezone string
+    ...
+);
+```
+
+### Testing Requirements
+- **Unit tests**: Verify all fallback paths (venue → team → ET → UTC)
+- **Integration tests**: Test timezone edge cases (Hawaii, Puerto Rico, London games)
+- **Validation**: Assert `arena_tz` is never NULL in production data
+
+### Common Pitfalls
+❌ **WRONG**: Using local time from API responses directly  
+❌ **WRONG**: Assuming all games are in Eastern Time  
+❌ **WRONG**: Storing naive datetime objects  
+✅ **CORRECT**: Convert API times to UTC, derive local from arena_tz
+
+---
+
+## Status Normalization
+
+### Game Status Mapping
+
+All game statuses from external sources must be normalized to our canonical enum:
+
+```python
+from enum import Enum
+
+class GameStatus(str, Enum):
+    """Canonical game status values."""
+    SCHEDULED = "SCHEDULED"       # Game not yet started
+    IN_PROGRESS = "IN_PROGRESS"   # Game currently live
+    FINAL = "FINAL"               # Game completed
+    POSTPONED = "POSTPONED"       # Game delayed to future date
+    CANCELLED = "CANCELLED"       # Game will not be played
+    SUSPENDED = "SUSPENDED"       # Game stopped mid-play (rare)
+
+# NBA Stats API → Canonical Mapping
+NBA_STATS_STATUS_MAP = {
+    "1": GameStatus.SCHEDULED,      # Not started
+    "2": GameStatus.IN_PROGRESS,    # Live
+    "3": GameStatus.FINAL,          # Final
+    "Final": GameStatus.FINAL,
+    "Scheduled": GameStatus.SCHEDULED,
+    "PPD": GameStatus.POSTPONED,
+    "Postponed": GameStatus.POSTPONED,
+    "Cancelled": GameStatus.CANCELLED,
+    "Suspended": GameStatus.SUSPENDED,
+}
+
+# Basketball Reference → Canonical Mapping
+BREF_STATUS_MAP = {
+    "Final": GameStatus.FINAL,
+    "Final/OT": GameStatus.FINAL,
+    "Final/2OT": GameStatus.FINAL,
+    "": GameStatus.SCHEDULED,        # Empty = future game
+    "Preview": GameStatus.SCHEDULED,
+    "Postponed": GameStatus.POSTPONED,
+}
+
+def normalize_game_status(raw_status: str, source: str) -> GameStatus:
+    """Normalize game status from any source."""
+    status_map = NBA_STATS_STATUS_MAP if source == "nba_stats" else BREF_STATUS_MAP
+    
+    normalized = status_map.get(raw_status)
+    if normalized is None:
+        logger.warning(
+            "Unknown game status encountered",
+            raw_status=raw_status,
+            source=source
+        )
+        # Safe fallback: assume completed if unknown
+        return GameStatus.FINAL
+    
+    return normalized
+```
+
+### Usage in Transformers
+```python
+def transform_game(raw_data: dict, source: str) -> Game:
+    raw_status = raw_data.get("game_status_text", "")
+    status = normalize_game_status(raw_status, source)
+    
+    return Game(
+        game_id=raw_data["game_id"],
+        status=status,  # Always canonical enum
+        ...
+    )
+```
+
+### Testing Requirements
+- Test all mapping keys have valid canonical values
+- Test unknown status fallback behavior
+- Validate no NULL statuses in production data
+
+---
+
+## Season Rules & Validation
+
+### Season Format Standard
+
+**Format**: `YYYY-YY` (e.g., "2024-25" for 2024-25 season)
+
+### Season Derivation Logic
+
+```python
+import re
+from datetime import date, datetime
+from typing import Optional
+
+def derive_season_smart(
+    game_id: Optional[str] = None,
+    game_date: Optional[date] = None,
+    raw_season: Optional[str] = None
+) -> str:
+    """
+    Smart season derivation with multiple fallback strategies.
+    
+    Priority:
+    1. Valid raw_season if provided
+    2. Derive from game_id if present
+    3. Derive from game_date if present
+    4. Return "UNKNOWN" (never fail)
+    """
+    # Try raw_season first if valid
+    if raw_season and re.match(r'^\d{4}-\d{2}$', raw_season):
+        return raw_season
+    
+    # Derive from game_id (format: 00SSGGGGGG where SS = season year suffix)
+    if game_id and len(game_id) >= 4:
+        try:
+            season_suffix = game_id[2:4]  # Extract "24" from "0022401234"
+            season_int = int(season_suffix)
+            
+            # Convert 2-digit year to 4-digit (handles century correctly)
+            if season_int >= 90:  # 90-99 = 1990s
+                start_year = 1900 + season_int
+            else:  # 00-89 = 2000s
+                start_year = 2000 + season_int
+            
+            end_year_suffix = (start_year + 1) % 100
+            return f"{start_year}-{end_year_suffix:02d}"
+        except (ValueError, IndexError):
+            pass
+    
+    # Derive from game_date (season starts in October)
+    if game_date:
+        year = game_date.year
+        # Games Oct-Dec belong to current season, Jan-Sep belong to previous season
+        if game_date.month >= 10:
+            start_year = year
+        else:
+            start_year = year - 1
+        
+        end_year_suffix = (start_year + 1) % 100
+        return f"{start_year}-{end_year_suffix:02d}"
+    
+    # Absolute fallback
+    logger.error(
+        "Could not derive season from any source",
+        game_id=game_id,
+        game_date=game_date,
+        raw_season=raw_season
+    )
+    return "UNKNOWN"
+```
+
+### Season Validation Window
+
+```python
+from datetime import datetime
+
+def is_valid_season_year(season: str) -> bool:
+    """Validate season is within reasonable bounds."""
+    if not re.match(r'^\d{4}-\d{2}$', season):
+        return False
+    
+    start_year = int(season[:4])
+    
+    # NBA founded in 1946, validate reasonable range
+    min_year = 1946
+    max_year = datetime.now().year + 2  # Allow 2 years in future
+    
+    return min_year <= start_year <= max_year
+
+def validate_season(season: str) -> str:
+    """Validate and return season or raise error."""
+    if not is_valid_season_year(season):
+        raise ValueError(
+            f"Season {season!r} outside valid range (1946-present+2 years)"
+        )
+    return season
+```
+
+### Testing Requirements
+- Test all derivation paths (game_id, game_date, raw_season)
+- Test century boundary (1999-00, 2000-01)
+- Test month boundaries (September → October cutoff)
+- Test invalid formats (log warning, don't crash)
+
+---
+
+## Team Alias Management
+
+### Adding a New Team Alias
+
+**When to add**: When you encounter a team tricode variation that isn't recognized.
+
+#### Step 1: Update `team_aliases.yaml`
+
+```yaml
+# team_aliases.yaml
+# Format: CANONICAL_TRICODE is the key, aliases are the list
+
+BOS:  # Boston Celtics (canonical)
+  - BOS
+  - BOSTON
+  - Celtics
+  home_timezone: "America/New_York"
+  full_name: "Boston Celtics"
+
+# Add new alias to existing team
+LAL:  # Los Angeles Lakers
+  - LAL
+  - LAL_OLD  # Historical alias
+  - LAKERS
+  - "L.A. Lakers"  # Quote if contains special chars
+  home_timezone: "America/Los_Angeles"
+  full_name: "Los Angeles Lakers"
+
+# Add completely new team (expansion scenario)
+SEA:  # Seattle SuperSonics (if returning)
+  - SEA
+  - SEATTLE
+  - SuperSonics
+  home_timezone: "America/Los_Angeles"  # Pacific time
+  full_name: "Seattle SuperSonics"
+```
+
+#### Step 2: Update Team Alias Tests
+
+```python
+# tests/unit/test_team_aliases.py
+
+def test_new_team_alias_normalization():
+    """Test that new alias normalizes correctly."""
+    from nba_scraper.utils.teams import normalize_team_tricode
+    
+    # Test new alias
+    assert normalize_team_tricode("LAL_OLD") == "LAL"
+    assert normalize_team_tricode("L.A. Lakers") == "LAL"
+    
+    # Test canonical form
+    assert normalize_team_tricode("LAL") == "LAL"
+
+def test_all_teams_have_required_fields():
+    """Validate team_aliases.yaml schema."""
+    import yaml
+    from pathlib import Path
+    
+    aliases_path = Path("team_aliases.yaml")
+    with open(aliases_path) as f:
+        teams = yaml.safe_load(f)
+    
+    for tricode, config in teams.items():
+        # Required fields
+        assert isinstance(config, list) or isinstance(config, dict)
+        if isinstance(config, dict):
+            assert "home_timezone" in config
+            assert "full_name" in config
+            assert isinstance(config.get("aliases", []), list)
+```
+
+#### Step 3: Validate with CLI
+
+```bash
+# Test alias resolution
+python -c "
+from nba_scraper.utils.teams import normalize_team_tricode
+print(normalize_team_tricode('LAL_OLD'))  # Should print: LAL
+print(normalize_team_tricode('LAKERS'))   # Should print: LAL
+"
+
+# Run all team-related tests
+pytest tests/unit/test_team_aliases.py -v
+```
+
+#### Step 4: Integration Test
+
+```bash
+# Process a game with the new alias
+nba-scraper daily --date-range 2024-01-15 --force
+
+# Verify in database
+psql nba_scraper -c "
+SELECT DISTINCT home_team_tricode, away_team_tricode 
 FROM games 
-GROUP BY game_id 
-HAVING COUNT(*) > 1;
+WHERE game_date_local = '2024-01-15'
+ORDER BY home_team_tricode;
+"
+# All tricodes should be canonical (3 uppercase letters)
 ```
 
-#### Missing Crosswalk Entries
+### Files to Touch Checklist
+- [ ] `team_aliases.yaml` - Add alias mapping
+- [ ] `tests/unit/test_team_aliases.py` - Add test for new alias
+- [ ] Run `pytest tests/unit/test_team_aliases.py -v`
+- [ ] Run integration test with real game data
+- [ ] Verify database contains canonical tricodes only
+
+---
+
+## Performance & Benchmarking
+
+### Performance Tuning Knobs
+
+The scraper has several configurable parameters that affect throughput and resource utilization:
+
+#### Database Connection Pool
+
+```python
+# Environment variables or .env file
+DB_POOL_SIZE=20           # Connection pool size (default: 10)
+DB_MAX_OVERFLOW=30        # Max overflow connections (default: 20)
+DB_POOL_TIMEOUT=30        # Pool checkout timeout in seconds (default: 30)
+DB_QUERY_TIMEOUT=30       # Query execution timeout in seconds (default: 30)
+```
+
+**Tuning Guidelines:**
+- **Low concurrency (1-5 workers)**: Pool size = 10-15
+- **Medium concurrency (5-10 workers)**: Pool size = 20-30
+- **High concurrency (10-20 workers)**: Pool size = 40-60
+- **Rule of thumb**: Pool size ≈ 2 × concurrency + safety margin
+
+**Symptoms of undersized pool:**
+- Warnings: `QueuePool limit of size X overflow Y reached`
+- Increased latency due to connection waiting
+- Timeouts on pool checkout
+
+**Symptoms of oversized pool:**
+- Database connection errors (too many clients)
+- Wasted memory
+- Increased connection overhead
+
+#### Rate Limiting
+
+```python
+# API rate limits (requests per second)
+NBA_API_RPS=4.0           # NBA Stats API (default: 4.0, conservative)
+BREF_RPS=2.0              # Basketball Reference (default: 2.0)
+MAX_CONCURRENT_REQUESTS=5  # Global concurrent limit (default: 5)
+```
+
+**Safe Defaults (No Ban Risk):**
+- NBA Stats API: 3-4 RPS
+- Basketball Reference: 1-2 RPS
+- Max concurrent: 3-5
+
+**Aggressive (Higher Ban Risk):**
+- NBA Stats API: 6-8 RPS
+- Basketball Reference: 3-4 RPS
+- Max concurrent: 10-15
+
+**Signs of rate limiting:**
+- 429 (Too Many Requests) errors
+- 503 (Service Unavailable) responses
+- Exponential backoff retries triggered frequently
+
+#### Concurrency Control
+
+```python
+# Pipeline-level concurrency
+BACKFILL_CHUNK_SIZE=10    # Games per batch (default: 10)
+```
+
+**Recommendations:**
+- **Initial backfill**: 5-10 games/batch, concurrency 3-5
+- **Daily updates**: 20-50 games/batch, concurrency 5-10
+- **Real-time live**: 1-2 games, concurrency 1-2
+
+### Benchmark Harness
+
+Use `scripts/bench_season.py` to measure pipeline performance:
+
+#### Basic Usage
+
+```bash
+# Benchmark 10 games with default settings
+python scripts/bench_season.py --games 10 --concurrency 5
+
+# Output:
+# ============================================================
+# PERFORMANCE BENCHMARK SUMMARY
+# ============================================================
+# 
+# TIMING:
+#   Total Elapsed:        45.23s
+#   Total Request Time:   38.42s
+# 
+# THROUGHPUT:
+#   Requests Total:       30
+#   Requests Success:     30
+#   Requests Failed:      0
+#   Requests/sec:         0.66
+#   Success Rate:         100.0%
+# 
+# DATABASE:
+#   Rows Inserted:        4,523
+#   Rows Updated:         0
+#   Rows/sec:             100.02
+#   Inserts/sec:          100.02
+# 
+# LATENCY (milliseconds):
+#   Average:              1,280.67ms
+#   P50 (median):         1,245.32ms
+#   P95:                  1,892.45ms
+#   P99:                  2,103.21ms
+#   Max:                  2,234.56ms
+#   Min:                  892.14ms
+# 
+# ERRORS:
+#   Total Errors:         0
+# ============================================================
+```
+
+#### Advanced Usage
+
+```bash
+# Benchmark 50 games from specific season with high concurrency
+python scripts/bench_season.py \
+  --season 2024-25 \
+  --games 50 \
+  --concurrency 10 \
+  --db-pool-size 25 \
+  --max-rps 6.0
+
+# Output JSON for parsing/automation
+python scripts/bench_season.py \
+  --games 20 \
+  --format json > benchmark_results.json
+
+# Output TSV for spreadsheet analysis
+python scripts/bench_season.py \
+  --games 30 \
+  --format tsv > benchmark.tsv
+
+# Run in offline mode (use cached data)
+python scripts/bench_season.py \
+  --games 10 \
+  --offline
+
+# Quiet mode (only show summary)
+python scripts/bench_season.py \
+  --games 100 \
+  --concurrency 10 \
+  --quiet
+```
+
+#### Interpreting Results
+
+**Target Metrics (Production Quality):**
+- **Requests/sec**: 0.5-1.0 (limited by rate limiting)
+- **Rows/sec**: 50-150 (depends on PBP event density)
+- **Success Rate**: >95%
+- **P95 Latency**: <2000ms
+- **Errors**: <5% of total requests
+
+**Red Flags:**
+- **Success rate <90%**: Check API availability, rate limits
+- **P95 latency >3000ms**: Database bottleneck or network issues
+- **Rows/sec <30**: Loader inefficiency or DB contention
+- **Errors >10%**: Critical issue requiring investigation
+
+#### TSV Format for Automation
+
+```bash
+# Run benchmark and parse TSV output
+python scripts/bench_season.py --games 20 --format tsv --quiet | \
+  awk -F'\t' '{print "Throughput:", $5, "req/s, Latency P95:", $11, "ms"}'
+
+# TSV Column Order:
+# 1.  elapsed_s      - Total elapsed time
+# 2.  reqs_total     - Total requests
+# 3.  reqs_ok        - Successful requests
+# 4.  reqs_fail      - Failed requests
+# 5.  req_per_s      - Requests per second
+# 6.  rows_ins       - Rows inserted
+# 7.  rows_upd       - Rows updated
+# 8.  rows_per_s     - Rows per second
+# 9.  ins_per_s      - Inserts per second
+# 10. avg_lat_ms     - Average latency (ms)
+# 11. p95_lat_ms     - P95 latency (ms)
+# 12. errors         - Total errors
+```
+
+### Performance Testing Workflow
+
+#### 1. Baseline Benchmark
+
+```bash
+# Establish baseline with conservative settings
+python scripts/bench_season.py \
+  --season 2024-25 \
+  --games 20 \
+  --concurrency 5 \
+  --db-pool-size 15 \
+  --max-rps 4.0 \
+  --format json > baseline.json
+```
+
+#### 2. Tune Parameters
+
+```bash
+# Test higher concurrency
+python scripts/bench_season.py \
+  --games 20 \
+  --concurrency 10 \
+  --db-pool-size 25 \
+  --max-rps 6.0 \
+  --format json > tuned.json
+
+# Compare results
+python -c "
+import json
+with open('baseline.json') as f:
+    baseline = json.load(f)
+with open('tuned.json') as f:
+    tuned = json.load(f)
+
+print(f'Throughput improvement: {tuned[\"requests_per_sec\"] / baseline[\"requests_per_sec\"]:.2f}x')
+print(f'Latency change: {tuned[\"p95_latency_ms\"] - baseline[\"p95_latency_ms\"]:.2f}ms')
+print(f'Error rate: {tuned[\"total_errors\"]} vs {baseline[\"total_errors\"]}')
+"
+```
+
+#### 3. Stress Test
+
+```bash
+# Push to limits to find breaking point
+for concurrency in 5 10 15 20; do
+  echo "Testing concurrency=$concurrency"
+  python scripts/bench_season.py \
+    --games 50 \
+    --concurrency $concurrency \
+    --db-pool-size $((concurrency * 2 + 10)) \
+    --format tsv \
+    --quiet >> stress_test_results.tsv
+done
+
+# Analyze results
+cat stress_test_results.tsv | \
+  awk -F'\t' '{print NR, $5, $11, $12}' | \
+  column -t
+```
+
+### Database Performance
+
+#### Connection Pool Monitoring
+
+```python
+# Add to monitoring dashboard
+from nba_scraper.db import get_engine
+
+engine = get_engine()
+pool = engine.pool
+
+print(f"Pool size: {pool.size()}")
+print(f"Checked out: {pool.checkedout()}")
+print(f"Overflow: {pool.overflow()}")
+print(f"Queue size: {pool.queue.qsize()}")
+```
+
+#### Query Performance
+
 ```sql
--- Games without B-Ref mapping
-SELECT g.game_id, g.home_team_tricode, g.away_team_tricode 
-FROM games g 
-LEFT JOIN game_id_crosswalk c ON g.game_id = c.game_id 
-WHERE c.game_id IS NULL;
+-- Top 10 slowest queries
+SELECT 
+    query,
+    calls,
+    total_time,
+    mean_time,
+    max_time
+FROM pg_stat_statements
+ORDER BY mean_time DESC
+LIMIT 10;
+
+-- Index usage statistics
+SELECT
+    schemaname,
+    tablename,
+    indexname,
+    idx_scan,
+    idx_tup_read,
+    idx_tup_fetch
+FROM pg_stat_user_indexes
+WHERE idx_scan = 0
+  AND indexname NOT LIKE '%_pkey'
+ORDER BY schemaname, tablename;
+
+-- Table bloat check
+SELECT
+    schemaname,
+    tablename,
+    pg_size_pretty(pg_total_relation_size(schemaname||'.'||tablename)) AS size,
+    n_live_tup,
+    n_dead_tup,
+    round(n_dead_tup * 100.0 / NULLIF(n_live_tup + n_dead_tup, 0), 2) AS dead_pct
+FROM pg_stat_user_tables
+WHERE n_dead_tup > 1000
+ORDER BY n_dead_tup DESC;
 ```
 
-#### PBP Validation
+### Troubleshooting Performance Issues
+
+#### Issue: Low Throughput (<0.3 req/s)
+
+**Diagnosis:**
+```bash
+# Check if rate limiting is the bottleneck
+python scripts/bench_season.py --games 10 --max-rps 8.0
+
+# Check database pool
+# Look for "QueuePool limit reached" in logs
+```
+
+**Solutions:**
+- Increase `NBA_API_RPS` (cautiously)
+- Increase `MAX_CONCURRENT_REQUESTS`
+- Verify network latency to APIs
+
+#### Issue: High Latency (P95 >3000ms)
+
+**Diagnosis:**
 ```sql
--- Check for PBP gaps
-SELECT game_id, period, 
-       LAG(event_idx) OVER (PARTITION BY game_id, period ORDER BY event_idx) as prev_idx,
-       event_idx
-FROM pbp_events 
-WHERE event_idx - LAG(event_idx) OVER (PARTITION BY game_id, period ORDER BY event_idx) > 1;
+-- Check for slow queries
+SELECT * FROM pg_stat_activity WHERE state = 'active' AND query_start < NOW() - INTERVAL '2 seconds';
+
+-- Check for lock contention
+SELECT * FROM pg_locks WHERE NOT granted;
 ```
 
-## Testing Strategy
+**Solutions:**
+- Increase `DB_POOL_SIZE`
+- Add missing indexes
+- Optimize loader upsert queries
+- Use `COPY` for bulk inserts
 
-### Test Structure
+#### Issue: Database Deadlocks
+
+**Symptoms:**
+- Error: `deadlock detected`
+- Transactions timing out
+- Random failures during high concurrency
+
+**Solutions:**
+```python
+# Use DEFERRABLE constraints in transactions
+async with transaction():
+    await conn.execute('SET CONSTRAINTS ALL DEFERRED')
+    # ... your operations
+
+# Reduce transaction scope
+# Instead of: 1 transaction for entire game
+# Use: Separate transactions for game, PBP, lineups
+
+# Add explicit lock ordering
+# Always acquire locks in same order: games → PBP → lineups
 ```
-tests/
-├── unit/                 # Fast, isolated tests
-├── integration/          # Database and API tests
-└── data/                 # Golden test fixtures
-    ├── expected/
-    └── raw/
+
+#### Issue: Memory Growth
+
+**Diagnosis:**
+```bash
+# Monitor memory during benchmark
+python scripts/bench_season.py --games 100 &
+while true; do
+  ps aux | grep bench_season.py | grep -v grep | awk '{print $6/1024 "MB"}'
+  sleep 5
+done
 ```
 
-### Test Categories
-- **Unit Tests**: Pure function testing with mocked dependencies
-- **Integration Tests**: Database operations and API calls
-- **Golden File Tests**: Deterministic parsing with known inputs
-- **Validation Tests**: Data quality and completeness checks
+**Solutions:**
+- Reduce `BACKFILL_CHUNK_SIZE`
+- Process games in smaller batches
+- Clear caches between batches
+- Use streaming/pagination for large result sets
 
-### Best Practices
-- No live API calls in CI
-- Use fixtures for consistent test data
-- Test error conditions and edge cases
-- Validate data transformations thoroughly
+### Performance Best Practices
 
-# Development Best Practices
+**DO:**
+✅ Start with conservative settings and tune up  
+✅ Monitor error rates and success percentage  
+✅ Use connection pooling (never create connections per-request)  
+✅ Batch similar operations together  
+✅ Use prepared statements for repeated queries  
+✅ Profile before optimizing  
 
-## 🔀 Branching & PR Strategy
-- Create feature branches off `main`
-- Use squash merges to keep history clean
-- PRs must reference related issues/tickets
+**DON'T:**
+❌ Disable rate limiting (risks API bans)  
+❌ Create new connections for every request  
+❌ Run high concurrency on shared/production databases  
+❌ Ignore warnings about pool exhaustion  
+❌ Skip benchmarking after changes  
 
-## 👥 Code Review
-- All PRs require peer review
-- Use the strict validation checklist in `.github/PULL_REQUEST_TEMPLATE`
-- Block merges if validation rules, lint, or type checks fail
+---
 
-## 📦 Dependency Management
-- Pin all dependencies in `pyproject.toml`
-- Run `uv sync --frozen` before CI
-- Regularly update with `uv pip upgrade` and review changelog
-- Security scans must pass (Dependabot or equivalent)
+## Adding Derived Windows
 
-## 🧪 Testing Expectations
-- **Unit tests** for transformers, extractors, loaders
-- **Integration tests** for full pipeline runs
-- **Regression tests** for critical bugfixes
-- Minimum 90% coverage required on PRs
+**Derived windows** are analytics tables computed from core data (e.g., `q1_window_12_8`, `early_shocks`).
 
-## 📊 Logging & Monitoring
-- Use structured logs (`game_id`, `season`, `event_type`)
-- Log levels: INFO for success, WARNING for recoverable issues, ERROR for failures
-- Monitor ETL runs with alerts on pipeline errors
+### Checklist for New Derived Window
 
-## ⚙️ CI/CD Standards
-- CI must include: tests, lint, type check, coverage
-- CD must validate migrations and run smoke tests before deploy
+#### 1. Define Schema in `schema.sql`
 
-## 🔑 Security Guidelines
-- Never commit API keys or secrets
-- Use `.env` with `dotenv` (ignored by git)
-- Rotate keys regularly
+```sql
+-- Example: Add Q2 clutch window (6:00-2:00)
+CREATE TABLE q2_clutch_6_2 (
+    game_id TEXT PRIMARY KEY,
+    home_team_tricode TEXT NOT NULL,
+    away_team_tricode TEXT NOT NULL,
+    
+    -- Metrics
+    possessions_elapsed INTEGER NOT NULL,
+    home_clutch_fg_pct NUMERIC,
+    away_clutch_fg_pct NUMERIC,
+    home_turnovers INTEGER,
+    away_turnovers INTEGER,
+    
+    -- Provenance
+    source TEXT NOT NULL,
+    source_url TEXT NOT NULL,
+    ingested_at_utc TIMESTAMPTZ DEFAULT NOW(),
+    
+    -- Foreign key
+    FOREIGN KEY (game_id) REFERENCES games (game_id) ON DELETE CASCADE
+);
 
-## 📚 Documentation Standards
-- Update README for new features
-- Maintain CHANGELOG.md with every release
-- All public functions require docstrings
+-- Indexes for common queries
+CREATE INDEX idx_q2_clutch_teams ON q2_clutch_6_2 (home_team_tricode, away_team_tricode);
+CREATE INDEX idx_q2_clutch_fg_pct ON q2_clutch_6_2 (home_clutch_fg_pct, away_clutch_fg_pct);
 
-## Deployment & Operations
+-- Table comment
+COMMENT ON TABLE q2_clutch_6_2 IS 'Second quarter clutch analytics (6:00-2:00 window)';
 ```
+
+#### 2. Create Transformer Logic
+
+```python
+# src/nba_scraper/transformers/derived/q2_clutch.py
+
+from typing import List
+from nba_scraper.models.pbp import PBPEvent
+from nba_scraper.models.derived import Q2ClutchWindow
+
+def compute_q2_clutch_window(
+    game_id: str,
+    pbp_events: List[PBPEvent]
+) -> Q2ClutchWindow:
+    """
+    Compute Q2 clutch metrics for 6:00-2:00 window.
+    
+    Args:
+        game_id: NBA game identifier
+        pbp_events: List of play-by-play events for the game
+    
+    Returns:
+        Q2ClutchWindow model with computed metrics
+    """
+    # Filter to Q2, 6:00-2:00 window
+    q2_clutch_events = [
+        e for e in pbp_events
+        if e.period == 2 
+        and 360 <= e.seconds_elapsed <= 600  # 6:00 to 10:00 mark
+    ]
+    
+    # Compute metrics
+    home_shots = [e for e in q2_clutch_events if e.event_type == "SHOT" and e.team_tricode == home_team]
+    away_shots = [e for e in q2_clutch_events if e.event_type == "SHOT" and e.team_tricode == away_team]
+    
+    home_fg_pct = sum(1 for s in home_shots if s.shot_made) / len(home_shots) if home_shots else 0.0
+    away_fg_pct = sum(1 for s in away_shots if s.shot_made) / len(away_shots) if away_shots else 0.0
+    
+    return Q2ClutchWindow(
+        game_id=game_id,
+        home_team_tricode=home_team,
+        away_team_tricode=away_team,
+        possessions_elapsed=len(q2_clutch_events),
+        home_clutch_fg_pct=home_fg_pct,
+        away_clutch_fg_pct=away_fg_pct,
+        ...
+    )
+```
+
+#### 3. Add Loader Function
+
+```python
+# src/nba_scraper/loaders/derived.py
+
+async def upsert_q2_clutch_window(
+    conn: AsyncConnection,
+    window: Q2ClutchWindow
+) -> None:
+    """Upsert Q2 clutch window analytics."""
+    query = text("""
+        INSERT INTO q2_clutch_6_2 (
+            game_id, home_team_tricode, away_team_tricode,
+            possessions_elapsed, home_clutch_fg_pct, away_clutch_fg_pct,
+            home_turnovers, away_turnovers,
+            source, source_url
+        ) VALUES (
+            :game_id, :home_team_tricode, :away_team_tricode,
+            :possessions_elapsed, :home_clutch_fg_pct, :away_clutch_fg_pct,
+            :home_turnovers, :away_turnovers,
+            :source, :source_url
+        )
+        ON CONFLICT (game_id) DO UPDATE SET
+            home_clutch_fg_pct = excluded.home_clutch_fg_pct,
+            away_clutch_fg_pct = excluded.away_clutch_fg_pct,
+            home_turnovers = excluded.home_turnovers,
+            away_turnovers = excluded.away_turnovers,
+            ingested_at_utc = NOW()
+        WHERE (
+            q2_clutch_6_2.home_clutch_fg_pct IS DISTINCT FROM excluded.home_clutch_fg_pct
+            OR q2_clutch_6_2.away_clutch_fg_pct IS DISTINCT FROM excluded.away_clutch_fg_pct
+            OR q2_clutch_6_2.home_turnovers IS DISTINCT FROM excluded.home_turnovers
+            OR q2_clutch_6_2.away_turnovers IS DISTINCT FROM excluded.away_turnovers
+        )
+    """)
+    
+    await conn.execute(query, window.model_dump())
+```
+
+#### 4. Update Analytics Pipeline
+
+```python
+# src/nba_scraper/pipelines/analytics.py
+
+async def derive_analytics_for_game(game_id: str) -> None:
+    """Derive all analytics for a single game."""
+    # Fetch PBP data
+    pbp_events = await fetch_pbp_events(game_id)
+    
+    # Compute Q1 window (existing)
+    q1_window = compute_q1_window_12_8(game_id, pbp_events)
+    await upsert_q1_window_12_8(conn, q1_window)
+    
+    # Compute NEW Q2 clutch window
+    q2_clutch = compute_q2_clutch_window(game_id, pbp_events)
+    await upsert_q2_clutch_window(conn, q2_clutch)
+    
+    # ... other analytics
+```
+
+#### 5. Create Unit Tests
+
+```python
+# tests/unit/test_q2_clutch_transformer.py
+
+import pytest
+from nba_scraper.transformers.derived import compute_q2_clutch_window
+from nba_scraper.models.pbp import PBPEvent
+
+def test_q2_clutch_basic_computation():
+    """Test basic Q2 clutch window computation."""
+    game_id = "0022400001"
+    
+    # Mock PBP events in Q2, 6:00-2:00 window
+    pbp_events = [
+        PBPEvent(
+            game_id=game_id,
+            period=2,
+            event_idx=100,
+            seconds_elapsed=420,  # 7:00 mark in Q2
+            event_type="SHOT",
+            team_tricode="BOS",
+            shot_made=True,
+            shot_value=2,
+            ...
+        ),
+        # ... more test events
+    ]
+    
+    result = compute_q2_clutch_window(game_id, pbp_events)
+    
+    assert result.game_id == game_id
+    assert result.possessions_elapsed > 0
+    assert 0.0 <= result.home_clutch_fg_pct <= 1.0
+    assert 0.0 <= result.away_clutch_fg_pct <= 1.0
+
+def test_q2_clutch_empty_window():
+    """Test handling of empty Q2 clutch window."""
+    game_id = "0022400002"
+    pbp_events = []  # No events
+    
+    result = compute_q2_clutch_window(game_id, pbp_events)
+    
+    assert result.possessions_elapsed == 0
+    assert result.home_clutch_fg_pct == 0.0
+    assert result.away_clutch_fg_pct == 0.0
+```
+
+#### 6. Add Integration Tests
+
+```python
+# tests/integration/test_q2_clutch_integration.py
+
+import pytest
+from nba_scraper.pipelines.analytics import derive_analytics_for_game
+
+@pytest.mark.asyncio
+@pytest.mark.integration
+async def test_q2_clutch_end_to_end(db_session):
+    """Test Q2 clutch derivation end-to-end."""
+    game_id = "0022400001"
+    
+    # Run analytics derivation
+    await derive_analytics_for_game(game_id)
+    
+    # Verify data in database
+    result = await db_session.execute(
+        text("SELECT * FROM q2_clutch_6_2 WHERE game_id = :game_id"),
+        {"game_id": game_id}
+    )
+    row = result.fetchone()
+    
+    assert row is not None
+    assert row.game_id == game_id
+    assert row.possessions_elapsed > 0
+```
+
+#### 7. Add Metrics & Monitoring
+
+```python
+# src/nba_scraper/metrics.py
+
+from prometheus_client import Counter, Histogram
+
+q2_clutch_computed = Counter(
+    'q2_clutch_windows_computed_total',
+    'Total Q2 clutch windows computed'
+)
+
+q2_clutch_computation_time = Histogram(
+    'q2_clutch_computation_seconds',
+    'Time to compute Q2 clutch window'
+)
+
+# Use in transformer
+@q2_clutch_computation_time.time()
+def compute_q2_clutch_window(...):
+    ...
+    q2_clutch_computed.inc()
+    return result
+```
+
+### Complete Checklist
+
+- [ ] Define schema in `schema.sql` with:
+  - [ ] Table structure with required columns
+  - [ ] Primary key (usually `game_id`)
+  - [ ] Foreign key to `games` table
+  - [ ] Indexes for common queries
+  - [ ] Table comment describing purpose
+  
+- [ ] Create transformer in `src/nba_scraper/transformers/derived/`:
+  - [ ] Pure function that takes PBP events
+  - [ ] Returns Pydantic model
+  - [ ] Handles edge cases (empty data, etc.)
+  
+- [ ] Add loader in `src/nba_scraper/loaders/derived.py`:
+  - [ ] Idempotent upsert with conflict handling
+  - [ ] Diff-aware UPDATE (only changed values)
+  
+- [ ] Update analytics pipeline:
+  - [ ] Call transformer
+  - [ ] Call loader
+  - [ ] Add error handling
+  
+- [ ] Create unit tests:
+  - [ ] Test basic computation
+  - [ ] Test edge cases (empty, invalid data)
+  - [ ] Test data validation
+  
+- [ ] Create integration tests:
+  - [ ] Test end-to-end derivation
+  - [ ] Verify database persistence
+  - [ ] Test idempotency
+  
+- [ ] Add metrics:
+  - [ ] Computation counter
+  - [ ] Computation time histogram
+  - [ ] Error counter
+  
+- [ ] Update documentation:
+  - [ ] Add to README.md data tables section
+  - [ ] Document metrics in DEV_NOTES.md
+  - [ ] Add to CHANGELOG.md
+
+---
+
+## Data Quality Checks
+
+### Pre-Deployment Validation
+
+Before deploying any changes, run these checks:
+
+```bash
+# 1. Schema validation
+psql nba_scraper -c "\d+ games"  # Verify table structure
+psql nba_scraper -c "\di"        # Check indexes exist
+
+# 2. Data completeness
+psql nba_scraper -c "
+SELECT 
+    COUNT(*) as total_games,
+    COUNT(DISTINCT game_id) as unique_games,
+    SUM(CASE WHEN status = 'FINAL' THEN 1 ELSE 0 END) as final_games
+FROM games
+WHERE game_date_local >= CURRENT_DATE - INTERVAL '7 days';
+"
+
+# 3. Referential integrity
+psql nba_scraper -c "
+SELECT 'pbp_events' as table_name, COUNT(*) as orphaned_rows
+FROM pbp_events p
+LEFT JOIN games g ON p.game_id = g.game_id
+WHERE g.game_id IS NULL
+UNION ALL
+SELECT 'outcomes', COUNT(*)
+FROM outcomes o
+LEFT JOIN games g ON o.game_id = g.game_id
+WHERE g.game_id IS NULL;
+"
+
+# 4. Run validation suite
+pytest tests/integration/test_data_quality.py -v
+```
+
+### Continuous Monitoring Queries
+
+```sql
+-- Daily data freshness check
+SELECT MAX(game_date_local) as latest_game_date,
+       MAX(ingested_at_utc) as latest_ingestion
+FROM games;
+
+-- PBP completeness (should be 400-500 events per game)
+SELECT game_id, COUNT(*) as event_count
+FROM pbp_events
+GROUP BY game_id
+HAVING COUNT(*) < 300 OR COUNT(*) > 700
+ORDER BY event_count;
+
+-- Status distribution
+SELECT status, COUNT(*) as count
+FROM games
+WHERE game_date_local >= CURRENT_DATE - INTERVAL '30 days'
+GROUP BY status;
+```
+
+---
+
+## Development Checklists
+
+### Adding a New Data Source
+
+- [ ] Create client in `src/nba_scraper/io_clients/`
+  - [ ] Implement rate limiting
+  - [ ] Add retry logic with exponential backoff
+  - [ ] Include proper User-Agent headers
+  
+- [ ] Add extraction functions in `src/nba_scraper/extractors/`
+  - [ ] Pure functions with no side effects
+  - [ ] Defensive parsing with fallbacks
+  - [ ] Structured error logging
+  
+- [ ] Create/update Pydantic models in `src/nba_scraper/models/`
+  - [ ] Strict validation rules
+  - [ ] Canonical enum values
+  - [ ] Documentation strings
+  
+- [ ] Add transformation logic in `src/nba_scraper/transformers/`
+  - [ ] Normalize team tricodes
+  - [ ] Convert timestamps to UTC
+  - [ ] Apply business rules
+  
+- [ ] Update database loader in `src/nba_scraper/loaders/`
+  - [ ] Idempotent upserts
+  - [ ] Diff-aware updates
+  - [ ] Provenance tracking
+  
+- [ ] Add comprehensive tests
+  - [ ] Unit tests with golden files
+  - [ ] Integration tests with test database
+  - [ ] Error condition coverage
+
+### Pre-Commit Checklist
+
+- [ ] Run code formatters: `ruff format`
+- [ ] Run linters: `ruff check`
+- [ ] Run type checker: `mypy src/nba_scraper`
+- [ ] Run unit tests: `pytest tests/unit/ -v`
+- [ ] Check test coverage: `pytest --cov=nba_scraper --cov-report=term-missing`
+- [ ] Update CHANGELOG.md if needed
+- [ ] Update documentation if APIs changed
+
+### Pre-Deploy Checklist
+
+- [ ] All tests passing in CI
+- [ ] Database migrations tested in staging
+- [ ] Data quality checks passing
+- [ ] Performance benchmarks acceptable
+- [ ] Error rates within SLOs
+- [ ] Rollback plan documented
+- [ ] Monitoring alerts configured
+
+---
+
+## Additional Resources
+
+- **Main README**: [README.md](README.md) - Project overview and quickstart
+- **Troubleshooting Guide**: [TROUBLESHOOTING.md](TROUBLESHOOTING.md) - Common issues and fixes
+- **Migration Guide**: [MIGRATIONS_SETUP.md](MIGRATIONS_SETUP.md) - Database migration procedures
+- **Contributing Guide**: [CONTRIBUTING.md](CONTRIBUTING.md) - Contribution guidelines
+- **Schema Documentation**: [schema.sql](schema.sql) - Complete database DDL with comments
+
+---
+
+**Questions or Issues?**  
+Open a GitHub issue or contact the data engineering team on Slack (#nba-scraper-dev).

@@ -19,6 +19,8 @@ class GameStatus(str, Enum):
     @classmethod
     def _missing_(cls, value: Any) -> "GameStatus":
         """Handle missing values by converting NBA Stats integer codes to enum values."""
+        from ..alerts import notify_schema_drift
+        
         # Handle integer inputs from NBA Stats API
         if isinstance(value, int):
             # Common NBA Stats status codes
@@ -27,7 +29,16 @@ class GameStatus(str, Enum):
                 2: cls.LIVE,
                 3: cls.FINAL,
             }
-            return status_map.get(value, cls.SCHEDULED)
+            if value in status_map:
+                return status_map[value]
+            # Unknown integer code - log drift
+            notify_schema_drift(
+                field="game_status",
+                value=value,
+                source="nba_stats",
+                expected_values=list(status_map.keys())
+            )
+            return cls.SCHEDULED
 
         # Handle string representations of integers
         if isinstance(value, str) and value.isdigit():
@@ -51,7 +62,15 @@ class GameStatus(str, Enum):
                 "SUSPENDED": cls.SUSPENDED,
                 "RESCHEDULED": cls.RESCHEDULED,
             }
-            return status_map.get(status_str, cls.SCHEDULED)
+            if status_str in status_map:
+                return status_map[status_str]
+            # Unknown string value - log drift
+            notify_schema_drift(
+                field="game_status",
+                value=value,
+                source="vendor_api",
+                expected_values=list(status_map.keys())
+            )
 
         # Default fallback
         return cls.SCHEDULED
@@ -229,6 +248,8 @@ class EventType(str, Enum):
         This prevents the '<' not supported between instances of 'int' and 'str' error
         by handling integer inputs from the NBA API.
         """
+        from ..alerts import notify_schema_drift
+        
         # NBA Stats integer code mappings
         nba_stats_map = {
             1: cls.SHOT_MADE,
@@ -249,12 +270,29 @@ class EventType(str, Enum):
 
         # Handle integer inputs from NBA Stats API
         if isinstance(value, int):
-            return nba_stats_map.get(value, cls.SHOT_MADE)
+            if value in nba_stats_map:
+                return nba_stats_map[value]
+            # Unknown event type code - log drift and return safe default
+            notify_schema_drift(
+                field="event_type",
+                value=value,
+                source="nba_stats",
+                expected_values=list(nba_stats_map.keys())
+            )
+            return cls.SHOT_MADE
 
         # Handle string representations of integers
         if isinstance(value, str) and value.isdigit():
-            return nba_stats_map.get(int(value), cls.SHOT_MADE)
+            return cls._missing_(int(value))
 
+        # Unknown string value - log drift
+        if value is not None:
+            notify_schema_drift(
+                field="event_type",
+                value=value,
+                source="vendor_api"
+            )
+        
         # Default fallback
         return cls.SHOT_MADE
 
